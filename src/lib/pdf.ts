@@ -378,9 +378,26 @@ async function drawDefaultCertificateDesign(
   zoneCenter(regular, 'Issued by', 8, orgX, footerLineY - 12, CERT_MUTED);
   zoneBlock(bold, values.issued_by, 13, orgX, footerLineY - 30, 190, CERT_INK, 9);
 
-  page.drawLine({ start: { x: dateX - 70, y: footerLineY }, end: { x: dateX + 70, y: footerLineY }, thickness: 1, color: rgb(...CERT_GREEN) });
-  zoneCenter(bold, 'ON THIS DAY', 10, dateX, footerLineY - 14, CERT_INK);
-  zoneBlock(italic, values.training_date, 12, dateX, footerLineY - 30, 190, CERT_INK, 8);
+  // "ON THIS DAY" and the date sit on one baseline (label bold, date
+  // italic), with the rule underneath both — matching the org's printed
+  // certificate, rather than stacked with the rule above.
+  const dateSize = fitFontSizeToWidth(italic, values.training_date, 12, 140, 8);
+  const dayLabelWidth = bold.widthOfTextAtSize('ON THIS DAY', 10);
+  const dateWidth = italic.widthOfTextAtSize(values.training_date, dateSize);
+  const dayRowGap = 8;
+  const dayRowTotalWidth = dayLabelWidth + dayRowGap + dateWidth;
+  const dayRowY = footerLineY + 8;
+  let dayRowX = dateX - dayRowTotalWidth / 2;
+  page.drawText('ON THIS DAY', { x: dayRowX, y: dayRowY, size: 10, font: bold, color: rgb(...CERT_INK) });
+  dayRowX += dayLabelWidth + dayRowGap;
+  page.drawText(values.training_date, { x: dayRowX, y: dayRowY, size: dateSize, font: italic, color: rgb(...CERT_INK) });
+  const dayRuleHalfWidth = Math.max(70, dayRowTotalWidth / 2 + 12);
+  page.drawLine({
+    start: { x: dateX - dayRuleHalfWidth, y: footerLineY },
+    end: { x: dateX + dayRuleHalfWidth, y: footerLineY },
+    thickness: 1,
+    color: rgb(...CERT_GREEN),
+  });
 
   if (signatureImageBytes) {
     try {
