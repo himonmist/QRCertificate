@@ -54,6 +54,7 @@ function buildSnapshot(
     trainingEndDate: program.endDate.toISOString(),
     location: program.location ?? undefined,
     certificateId: certificateUid,
+    logoUrl: program.logoUrl ?? undefined,
   };
 }
 
@@ -245,11 +246,15 @@ export async function renderCertificateAssets(certificateUid: string): Promise<R
     certificate.program.trainers.find((t) => t.role === 'chief_trainer')?.trainer ??
     certificate.program.trainers[0]?.trainer;
 
-  const [backgroundImageBytes, signatureImageBytes, qrBuffer] = await Promise.all([
+  const [backgroundImageBytes, signatureImageBytes, logoImageBytes, qrBuffer] = await Promise.all([
     certificate.program.template?.backgroundUrl
       ? loadImageBytes(certificate.program.template.backgroundUrl)
       : Promise.resolve(null),
     chiefTrainer?.signatureUrl ? loadImageBytes(chiefTrainer.signatureUrl) : Promise.resolve(null),
+    // Loaded from the frozen snapshot's logoUrl, not the live program row,
+    // so a later change to the program's logo can't retroactively alter an
+    // already-issued certificate — same rule as every other displayed field.
+    snapshot.logoUrl ? loadImageBytes(snapshot.logoUrl) : Promise.resolve(null),
     generateQrPngBuffer(certificate.qrPayloadUrl),
   ]);
 
@@ -257,6 +262,7 @@ export async function renderCertificateAssets(certificateUid: string): Promise<R
     layout,
     backgroundImageBytes,
     signatureImageBytes,
+    logoImageBytes,
     values,
     qrPngBuffer: qrBuffer,
   });

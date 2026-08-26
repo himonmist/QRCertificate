@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import { isTrustedImageReference } from './imageUrl';
 
+// Must be exactly what an image upload endpoint returned (see
+// isTrustedImageReference): a local /uploads/... path, or an https URL on
+// our trusted Vercel Blob host. Accepting arbitrary strings here would let
+// an Admin (not just Super Admin) turn certificate rendering — which
+// fetches this URL — into an SSRF/path-traversal primitive.
+const trustedImageRefSchema = (message: string) =>
+  z.string().trim().max(500).refine(isTrustedImageReference, message);
+
 export const trainerInputSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(200),
   designation: z.string().trim().max(200).optional(),
@@ -22,6 +30,7 @@ export const programInputSchemaBase = z.object({
   location: z.string().trim().max(300).optional(),
   duration: z.string().trim().max(100).optional(),
   templateId: z.string().uuid().optional(),
+  logoUrl: trustedImageRefSchema('logoUrl must be a path returned by an image upload endpoint').nullable().optional(),
 });
 
 export const programInputSchema = programInputSchemaBase.refine(
@@ -69,17 +78,7 @@ export const loginInputSchema = z.object({
 
 export const templateInputSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  // Must be exactly what an image upload endpoint returned (see
-  // isTrustedImageReference): a local /uploads/... path, or an https URL on
-  // our trusted Vercel Blob host. Accepting arbitrary strings here would let
-  // an Admin (not just Super Admin) turn certificate rendering — which
-  // fetches this URL — into an SSRF/path-traversal primitive.
-  backgroundUrl: z
-    .string()
-    .trim()
-    .max(500)
-    .refine(isTrustedImageReference, 'backgroundUrl must be a path returned by an image upload endpoint')
-    .optional(),
+  backgroundUrl: trustedImageRefSchema('backgroundUrl must be a path returned by an image upload endpoint').optional(),
   layoutJson: z.string().min(2),
 });
 

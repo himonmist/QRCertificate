@@ -17,6 +17,8 @@ export interface RenderCertificateInput {
   layout: CertificateLayout;
   backgroundImageBytes?: Buffer | null;
   signatureImageBytes?: Buffer | null;
+  /** Optional organization logo for the default design's "Issued by" footer zone. Omitted entirely (no placeholder) when not provided. */
+  logoImageBytes?: Buffer | null;
   values: CertificateValues;
   qrPngBuffer: Buffer;
 }
@@ -172,7 +174,8 @@ async function drawDefaultCertificateDesign(
   width: number,
   height: number,
   values: CertificateValues,
-  signatureImageBytes: Buffer | null | undefined
+  signatureImageBytes: Buffer | null | undefined,
+  logoImageBytes: Buffer | null | undefined
 ): Promise<void> {
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -222,18 +225,10 @@ async function drawDefaultCertificateDesign(
   cursorY -= 48;
   cursorY = drawCenteredBlock(page, nameFont, values.participant_name, 28, cursorY, contentMaxWidth, width, CERT_INK, 16);
 
-  cursorY -= 28;
-  const completionLine = values.designation
-    ? `He/She (${values.designation}) has successfully completed`
-    : 'He/She has successfully completed';
-  drawCentered(page, regular, completionLine, 13, cursorY, width, CERT_INK);
-
-  cursorY -= 26;
-  cursorY = drawCenteredBlock(page, bold, `"${values.program_title}"`, 16, cursorY, contentMaxWidth, width, CERT_INK, 10);
-
-  cursorY -= 24;
+  cursorY -= 30;
   const whereSuffix = values.location ? `, at ${values.location}` : '';
-  drawCenteredBlock(page, regular, `on ${values.training_date}${whereSuffix}.`, 12, cursorY, contentMaxWidth, width, CERT_INK, 9);
+  const completionParagraph = `He/She has successfully completed "${values.program_title}" on ${values.training_date}${whereSuffix}.`;
+  drawCenteredBlock(page, regular, completionParagraph, 13, cursorY, contentMaxWidth, width, CERT_INK, 10);
 
   // Footer: three zones — supporting organization (left), issue date (center), chief trainer's signature (right).
   const zoneCenter = (font: PDFFont, text: string, size: number, cx: number, y: number, color: [number, number, number]) => {
@@ -264,9 +259,21 @@ async function drawDefaultCertificateDesign(
   const dateX = width / 2;
   const sigX = width - 150;
 
-  page.drawEllipse({ x: orgX - 100, y: footerLineY - 12, xScale: 6, yScale: 6, color: rgb(...CERT_GREEN) });
-  zoneCenter(regular, 'Supported by', 8, orgX, footerLineY - 12, CERT_MUTED);
-  zoneBlock(bold, values.organized_by, 13, orgX, footerLineY - 30, 190, CERT_INK, 9);
+  // Logo is entirely optional — drawn only when the program has one
+  // uploaded, never as a placeholder mark, per the "if not selected then
+  // not showing" requirement.
+  if (logoImageBytes) {
+    try {
+      const image = await embedImageBytes(pdfDoc, logoImageBytes);
+      const logoHeight = 30;
+      const logoWidth = (image.width / image.height) * logoHeight;
+      page.drawImage(image, { x: orgX - 100 - logoWidth, y: footerLineY - 27, width: logoWidth, height: logoHeight });
+    } catch {
+      // Missing/corrupt logo file: footer text still renders below.
+    }
+  }
+  zoneCenter(regular, 'Issued by', 8, orgX, footerLineY - 12, CERT_MUTED);
+  zoneBlock(bold, values.issued_by, 13, orgX, footerLineY - 30, 190, CERT_INK, 9);
 
   page.drawLine({ start: { x: dateX - 70, y: footerLineY }, end: { x: dateX + 70, y: footerLineY }, thickness: 1, color: rgb(...CERT_GREEN) });
   zoneCenter(bold, 'ON THIS DAY', 10, dateX, footerLineY - 14, CERT_INK);
@@ -367,7 +374,7 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
     // No custom template: the platform's own "Certificate of Participation"
     // design (double green border, presented-to/name block, completion
     // paragraph, organization/date/signature footer).
-    await drawDefaultCertificateDesign(pdfDoc, page, width, height, input.values, input.signatureImageBytes);
+    await drawDefaultCertificateDesign(pdfDoc, page, width, height, input.values, input.signatureImageBytes, input.logoImageBytes);
 
     const qrImage = await pdfDoc.embedPng(input.qrPngBuffer);
     const qrSize = 62;

@@ -62,6 +62,7 @@ model TrainingProgram {
   endDate     DateTime
   location    String?
   duration    String?
+  logoUrl     String? // optional organization logo shown in the certificate's "Issued by" footer zone; omitted entirely when unset
 
   templateId String?
   template   CertificateTemplate? @relation(fields: [templateId], references: [id])

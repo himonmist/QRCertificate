@@ -75,6 +75,60 @@ describe('renderCertificatePdf', () => {
     const loaded = await PDFDocument.load(pdfBytes);
     expect(loaded.getPageCount()).toBe(1);
   });
+
+  it('embeds an optional logo image in the default design without requiring one', async () => {
+    const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
+    const values = {
+      participant_name: 'John Smith',
+      program_title: 'SmartDoc AI Workshop',
+      organized_by: 'MN Corporation',
+      issued_by: 'MN Corporation',
+      training_date: 'March 1, 2026',
+      certificate_id: 'MNC-2026-SDA-000001',
+    };
+
+    const withoutLogo = await renderCertificatePdf({
+      layout: DEFAULT_CERTIFICATE_LAYOUT,
+      backgroundImageBytes: null,
+      signatureImageBytes: null,
+      logoImageBytes: null,
+      values,
+      qrPngBuffer: qr,
+    });
+    expect((await PDFDocument.load(withoutLogo)).getPageCount()).toBe(1);
+
+    const withLogo = await renderCertificatePdf({
+      layout: DEFAULT_CERTIFICATE_LAYOUT,
+      backgroundImageBytes: null,
+      signatureImageBytes: null,
+      logoImageBytes: qr, // any valid PNG stands in for a logo image here
+      values,
+      qrPngBuffer: qr,
+    });
+    expect((await PDFDocument.load(withLogo)).getPageCount()).toBe(1);
+  });
+
+  it('does not overflow the footer for a very long organization or trainer name', async () => {
+    const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
+    const pdfBytes = await renderCertificatePdf({
+      layout: DEFAULT_CERTIFICATE_LAYOUT,
+      backgroundImageBytes: null,
+      signatureImageBytes: null,
+      values: {
+        participant_name: 'John Smith',
+        program_title: 'SmartDoc AI Workshop',
+        organized_by: 'MN Corporation',
+        issued_by: 'The Extremely Long Name Pharmaceutical and Healthcare Corporation Bangladesh Limited',
+        trainer_name: 'Professor Doctor Muhammad Abdullah Al-Mahmud Chowdhury Rahman',
+        training_date: 'March 1, 2026',
+        certificate_id: 'MNC-2026-SDA-000001',
+      },
+      qrPngBuffer: qr,
+    });
+
+    expect(pdfBytes.subarray(0, 5).toString('utf-8')).toBe('%PDF-');
+    expect((await PDFDocument.load(pdfBytes)).getPageCount()).toBe(1);
+  });
 });
 
 describe('fitFontSizeToWidth', () => {

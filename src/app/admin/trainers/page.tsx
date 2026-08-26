@@ -20,6 +20,8 @@ export default function TrainersPage() {
   const [designation, setDesignation] = useState('');
   const [organization, setOrganization] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [signatureUploading, setSignatureUploading] = useState<string | null>(null);
+  const [signatureErrors, setSignatureErrors] = useState<Record<string, string>>({});
 
   async function loadTrainers() {
     const res = await fetch('/api/trainers');
@@ -70,10 +72,23 @@ export default function TrainersPage() {
   }
 
   async function uploadSignature(trainerId: string, file: File) {
-    const form = new FormData();
-    form.set('signature', file);
-    const res = await fetch(`/api/trainers/${trainerId}/signature`, { method: 'POST', body: form });
-    if (res.ok) loadTrainers();
+    setSignatureUploading(trainerId);
+    setSignatureErrors((prev) => ({ ...prev, [trainerId]: '' }));
+    try {
+      const form = new FormData();
+      form.set('signature', file);
+      const res = await fetch(`/api/trainers/${trainerId}/signature`, { method: 'POST', body: form });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setSignatureErrors((prev) => ({ ...prev, [trainerId]: body.error ?? 'Upload failed' }));
+        return;
+      }
+      await loadTrainers();
+    } catch {
+      setSignatureErrors((prev) => ({ ...prev, [trainerId]: 'Upload failed — check your connection and try again' }));
+    } finally {
+      setSignatureUploading(null);
+    }
   }
 
   return (
@@ -142,22 +157,30 @@ export default function TrainersPage() {
                 </span>
               </td>
               <td>
-                {trainer.signatureUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={trainer.signatureUrl} alt="signature" style={{ height: 28 }} />
-                ) : (
+                <div className="flex items-center gap-2">
+                  {trainer.signatureUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={trainer.signatureUrl} alt={`${trainer.name}'s signature`} style={{ height: 28 }} />
+                  )}
                   <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
-                    Upload
+                    {signatureUploading === trainer.id ? 'Uploading…' : trainer.signatureUrl ? 'Replace' : 'Upload'}
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
                       className="hidden"
+                      disabled={signatureUploading === trainer.id}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) uploadSignature(trainer.id, file);
+                        e.target.value = '';
                       }}
                     />
                   </label>
+                </div>
+                {signatureErrors[trainer.id] && (
+                  <p style={{ color: 'var(--color-accent-700)', fontSize: 11, margin: '2px 0 0' }}>
+                    {signatureErrors[trainer.id]}
+                  </p>
                 )}
               </td>
               <td>

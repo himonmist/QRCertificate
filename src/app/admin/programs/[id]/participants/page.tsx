@@ -33,6 +33,7 @@ interface ProgramDetail {
   endDate: string;
   location: string | null;
   templateId: string | null;
+  logoUrl: string | null;
   trainers: { role: string; trainer: Trainer }[];
 }
 
@@ -56,6 +57,8 @@ export default function ProgramParticipantsPage() {
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
   const [trainerRole, setTrainerRole] = useState<'chief_trainer' | 'trainer'>('trainer');
   const [prefix, setPrefix] = useState('MNC');
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
 
   async function loadAll() {
     const [programRes, participantsRes, trainersRes, templatesRes] = await Promise.all([
@@ -135,6 +138,43 @@ export default function ProgramParticipantsPage() {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ templateId }),
+    });
+    loadAll();
+  }
+
+  async function handleLogoUpload(file: File) {
+    setLogoError(null);
+    setLogoUploading(true);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const uploadRes = await fetch('/api/uploads/logos', { method: 'POST', body: form });
+      if (!uploadRes.ok) {
+        setLogoError((await uploadRes.json().catch(() => ({}))).error ?? 'Upload failed');
+        return;
+      }
+      const { url } = await uploadRes.json();
+      const putRes = await fetch(`/api/programs/${programId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ logoUrl: url }),
+      });
+      if (!putRes.ok) {
+        setLogoError((await putRes.json().catch(() => ({}))).error ?? 'Failed to save logo');
+        return;
+      }
+      loadAll();
+    } finally {
+      setLogoUploading(false);
+    }
+  }
+
+  async function handleLogoRemove() {
+    setLogoError(null);
+    await fetch(`/api/programs/${programId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ logoUrl: null }),
     });
     loadAll();
   }
@@ -350,6 +390,38 @@ export default function ProgramParticipantsPage() {
             <Link href="/admin/templates" className="btn btn-ghost" style={{ paddingInline: 0 }}>
               Change template →
             </Link>
+          </div>
+
+          <div className="card elev-sm">
+            <div className="card-title">Certificate logo</div>
+            <p className="card-body" style={{ fontSize: 12 }}>
+              Optional. Shown next to &ldquo;Issued by&rdquo; on the certificate. Left off the
+              certificate entirely if none is uploaded.
+            </p>
+            {program.logoUrl && (
+              <div className="flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={program.logoUrl} alt="Certificate logo" style={{ height: 28 }} />
+                <button className="btn btn-ghost" onClick={handleLogoRemove}>
+                  Remove
+                </button>
+              </div>
+            )}
+            <label className="btn btn-secondary" style={{ cursor: 'pointer', alignSelf: 'flex-start' }}>
+              {logoUploading ? 'Uploading…' : program.logoUrl ? 'Replace logo' : 'Upload logo'}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                disabled={logoUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleLogoUpload(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            {logoError && <p style={{ color: 'var(--color-accent-700)', fontSize: 12 }}>{logoError}</p>}
           </div>
 
           <div className="card elev-md">
