@@ -358,24 +358,27 @@ async function drawDefaultCertificateDesign(
 
   // "ON THIS DAY" + date follow the paragraph directly, in the flowing
   // content — not pinned to the bottom footer — matching the printed
-  // certificate, where this line sits right under the completion
-  // sentence rather than down with the signature/organization block.
+  // certificate. The label sits at the left margin (not centered with the
+  // date), and the rule runs only under the date portion, starting after
+  // the label rather than passing beneath it.
   cursorY -= 34;
-  const dateX = width / 2;
-  const dateSize = fitFontSizeToWidth(italic, values.training_date, 12, 140, 8);
-  const dayLabelWidth = bold.widthOfTextAtSize('ON THIS DAY', 10);
+  const dayMarginLeft = 70;
+  const dayMarginRight = 70;
+  const dayLabelSize = 13;
+  const dayLabelWidth = bold.widthOfTextAtSize('ON THIS DAY', dayLabelSize);
+  page.drawText('ON THIS DAY', { x: dayMarginLeft, y: cursorY, size: dayLabelSize, font: bold, color: rgb(...CERT_INK) });
+
+  const dayLineStartX = dayMarginLeft + dayLabelWidth + 24;
+  const dayLineEndX = width - dayMarginRight;
+  const dateSize = fitFontSizeToWidth(italic, values.training_date, 14, dayLineEndX - dayLineStartX - 20, 9);
   const dateWidth = italic.widthOfTextAtSize(values.training_date, dateSize);
-  const dayRowGap = 8;
-  const dayRowTotalWidth = dayLabelWidth + dayRowGap + dateWidth;
-  let dayRowX = dateX - dayRowTotalWidth / 2;
-  page.drawText('ON THIS DAY', { x: dayRowX, y: cursorY, size: 10, font: bold, color: rgb(...CERT_INK) });
-  dayRowX += dayLabelWidth + dayRowGap;
-  page.drawText(values.training_date, { x: dayRowX, y: cursorY, size: dateSize, font: italic, color: rgb(...CERT_INK) });
+  const dateCenterX = (dayLineStartX + dayLineEndX) / 2;
+  page.drawText(values.training_date, { x: dateCenterX - dateWidth / 2, y: cursorY, size: dateSize, font: italic, color: rgb(...CERT_INK) });
+
   cursorY -= 12;
-  const dayRuleHalfWidth = Math.max(70, dayRowTotalWidth / 2 + 12);
   page.drawLine({
-    start: { x: dateX - dayRuleHalfWidth, y: cursorY },
-    end: { x: dateX + dayRuleHalfWidth, y: cursorY },
+    start: { x: dayLineStartX, y: cursorY },
+    end: { x: dayLineEndX, y: cursorY },
     thickness: 1,
     color: rgb(...CERT_GREEN),
   });
