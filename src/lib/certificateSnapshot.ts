@@ -17,7 +17,6 @@ export interface CertificateSnapshot {
   trainingEndDate: string; // ISO
   location?: string;
   certificateId: string;
-  logoUrl?: string;
 }
 
 function formatDateRange(startIso: string, endIso: string): string {

@@ -155,6 +155,96 @@ function drawCenteredBlock(
   return topY - lines.length * lineHeight;
 }
 
+interface ParagraphRun {
+  text: string;
+  font: PDFFont;
+}
+
+interface WordToken {
+  word: string;
+  font: PDFFont;
+}
+
+function tokenizeRuns(runs: ParagraphRun[]): WordToken[] {
+  const tokens: WordToken[] = [];
+  for (const run of runs) {
+    for (const word of run.text.split(/\s+/).filter(Boolean)) {
+      tokens.push({ word, font: run.font });
+    }
+  }
+  return tokens;
+}
+
+function wrapTokensToLines(tokens: WordToken[], size: number, maxWidth: number, spaceWidth: number): WordToken[][] {
+  const lines: WordToken[][] = [];
+  let current: WordToken[] = [];
+  let currentWidth = 0;
+  for (const token of tokens) {
+    const wordWidth = token.font.widthOfTextAtSize(token.word, size);
+    const addedWidth = current.length ? spaceWidth + wordWidth : wordWidth;
+    if (current.length && currentWidth + addedWidth > maxWidth) {
+      lines.push(current);
+      current = [token];
+      currentWidth = wordWidth;
+    } else {
+      current.push(token);
+      currentWidth += addedWidth;
+    }
+  }
+  if (current.length) lines.push(current);
+  return lines;
+}
+
+/**
+ * Draws a centered paragraph built from differently-styled runs (e.g. the
+ * program title and date bold, everything else regular) as ONE flowing,
+ * word-wrapped block — unlike drawCenteredBlock's single font, or
+ * drawCenteredRich's single non-wrapping line. Shrinks the shared font size
+ * first (same overflow-prevention rule as everywhere else) until the whole
+ * paragraph fits within maxLines, then wraps at that size.
+ */
+function drawCenteredParagraph(
+  page: PDFPage,
+  runs: ParagraphRun[],
+  baseSize: number,
+  topY: number,
+  maxWidth: number,
+  pageWidth: number,
+  color: [number, number, number] = [0.12, 0.12, 0.12],
+  minSize = 10,
+  maxLines = 4
+): number {
+  const tokens = tokenizeRuns(runs);
+  const spaceFont = tokens[0]?.font ?? runs[0]!.font;
+
+  let size = baseSize;
+  let lines = wrapTokensToLines(tokens, size, maxWidth, spaceFont.widthOfTextAtSize(' ', size));
+  while (lines.length > maxLines && size > minSize) {
+    size -= 1;
+    lines = wrapTokensToLines(tokens, size, maxWidth, spaceFont.widthOfTextAtSize(' ', size));
+  }
+
+  const spaceWidth = spaceFont.widthOfTextAtSize(' ', size);
+  const lineHeight = size * 1.3;
+  const [r, g, b] = color;
+
+  lines.forEach((line, i) => {
+    const lineWidth = line.reduce(
+      (sum, t, idx) => sum + t.font.widthOfTextAtSize(t.word, size) + (idx > 0 ? spaceWidth : 0),
+      0
+    );
+    let x = pageWidth / 2 - lineWidth / 2;
+    const y = topY - i * lineHeight;
+    line.forEach((t, idx) => {
+      if (idx > 0) x += spaceWidth;
+      page.drawText(t.word, { x, y, size, font: t.font, color: rgb(r, g, b) });
+      x += t.font.widthOfTextAtSize(t.word, size);
+    });
+  });
+
+  return topY - lines.length * lineHeight;
+}
+
 const CERT_GREEN: [number, number, number] = [0.05, 0.33, 0.19];
 const CERT_MUTED: [number, number, number] = [0.35, 0.33, 0.3];
 const CERT_INK: [number, number, number] = [0.12, 0.11, 0.1];
@@ -226,9 +316,22 @@ async function drawDefaultCertificateDesign(
   cursorY = drawCenteredBlock(page, nameFont, values.participant_name, 28, cursorY, contentMaxWidth, width, CERT_INK, 16);
 
   cursorY -= 30;
-  const whereSuffix = values.location ? `, at ${values.location}` : '';
-  const completionParagraph = `He/She has successfully completed "${values.program_title}" on ${values.training_date}${whereSuffix}.`;
-  drawCenteredBlock(page, regular, completionParagraph, 13, cursorY, contentMaxWidth, width, CERT_INK, 10);
+  drawCenteredParagraph(
+    page,
+    [
+      { text: 'He/She has successfully completed', font: regular },
+      { text: `"${values.program_title}"`, font: bold },
+      { text: 'on', font: regular },
+      { text: values.location ? `${values.training_date},` : `${values.training_date}.`, font: bold },
+      ...(values.location ? [{ text: `at ${values.location}.`, font: regular }] : []),
+    ],
+    13,
+    cursorY,
+    contentMaxWidth,
+    width,
+    CERT_INK,
+    10
+  );
 
   // Footer: three zones — supporting organization (left), issue date (center), chief trainer's signature (right).
   const zoneCenter = (font: PDFFont, text: string, size: number, cx: number, y: number, color: [number, number, number]) => {

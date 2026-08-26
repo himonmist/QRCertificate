@@ -54,7 +54,6 @@ function buildSnapshot(
     trainingEndDate: program.endDate.toISOString(),
     location: program.location ?? undefined,
     certificateId: certificateUid,
-    logoUrl: program.logoUrl ?? undefined,
   };
 }
 
@@ -251,10 +250,11 @@ export async function renderCertificateAssets(certificateUid: string): Promise<R
       ? loadImageBytes(certificate.program.template.backgroundUrl)
       : Promise.resolve(null),
     chiefTrainer?.signatureUrl ? loadImageBytes(chiefTrainer.signatureUrl) : Promise.resolve(null),
-    // Loaded from the frozen snapshot's logoUrl, not the live program row,
-    // so a later change to the program's logo can't retroactively alter an
-    // already-issued certificate — same rule as every other displayed field.
-    snapshot.logoUrl ? loadImageBytes(snapshot.logoUrl) : Promise.resolve(null),
+    // Loaded live from the program row, same as the signature/background
+    // above — a logo is a branding visual, not certified certificate
+    // content, so an admin adding one after certificates were already
+    // issued should see it appear immediately without needing to reissue.
+    certificate.program.logoUrl ? loadImageBytes(certificate.program.logoUrl) : Promise.resolve(null),
     generateQrPngBuffer(certificate.qrPayloadUrl),
   ]);
 
