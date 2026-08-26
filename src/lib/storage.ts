@@ -44,6 +44,17 @@ export async function saveUploadedImage(
     return blob.url;
   }
 
+  // On Vercel (and other serverless hosts), the filesystem is read-only
+  // outside /tmp — a write here always fails with a raw EROFS error that
+  // leaks an internal path and gives an admin no idea what's actually
+  // wrong. Fail with a clear, actionable message instead of attempting a
+  // write we already know cannot succeed.
+  if (process.env.VERCEL) {
+    throw new Error(
+      'Image storage is not configured for this deployment. In the Vercel dashboard, add a Blob store (Storage tab → Create Database → Blob) and redeploy — this sets BLOB_READ_WRITE_TOKEN automatically.'
+    );
+  }
+
   const dir = path.join(PUBLIC_UPLOADS_ROOT, category);
   await mkdir(dir, { recursive: true });
   const buffer = Buffer.from(await file.arrayBuffer());

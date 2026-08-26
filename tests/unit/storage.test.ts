@@ -35,6 +35,18 @@ describe('saveUploadedImage (local disk fallback — no BLOB_READ_WRITE_TOKEN)',
   });
 });
 
+describe('saveUploadedImage (misconfigured on Vercel — no BLOB_READ_WRITE_TOKEN)', () => {
+  afterEach(() => {
+    delete process.env.VERCEL;
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+  });
+
+  it('fails fast with an actionable message instead of attempting a doomed filesystem write', async () => {
+    process.env.VERCEL = '1';
+    await expect(saveUploadedImage('logos', makePngFile())).rejects.toThrow(/blob store/i);
+  });
+});
+
 describe('saveUploadedImage (Vercel Blob path)', () => {
   afterEach(() => {
     vi.doUnmock('@vercel/blob');
