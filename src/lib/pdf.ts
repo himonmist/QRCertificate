@@ -333,14 +333,13 @@ async function drawDefaultCertificateDesign(
     10
   );
 
-  // Footer: three zones — supporting organization (left), issue date (center), chief trainer's signature (right).
   const zoneCenter = (font: PDFFont, text: string, size: number, cx: number, y: number, color: [number, number, number]) => {
     const w = font.widthOfTextAtSize(text, size);
     page.drawText(text, { x: cx - w / 2, y, size, font, color: rgb(...color) });
   };
   // Like zoneCenter, but shrinks then wraps rather than letting a very long
-  // organization/trainer name run past this footer zone's bounds (the same
-  // overflow bug fixed for the main title, applied to the footer's zones).
+  // organization/trainer name run past this zone's bounds (the same
+  // overflow bug fixed for the main title, applied here too).
   const zoneBlock = (
     font: PDFFont,
     text: string,
@@ -357,85 +356,87 @@ async function drawDefaultCertificateDesign(
     lines.forEach((line, i) => zoneCenter(font, line, size, cx, topY - i * lineHeight, color));
   };
 
-  // The footer follows directly beneath the paragraph with a fixed gap,
-  // rather than sitting at a fixed distance from the bottom border — a
-  // short certificate previously left a large dead gap between the
-  // paragraph and "ON THIS DAY". Never lower than 100pt from the bottom,
-  // so a maximally-wrapped paragraph can't crowd the border.
-  const footerLineY = Math.max(100, cursorY - 60);
-  const orgX = 145;
+  // "ON THIS DAY" + date follow the paragraph directly, in the flowing
+  // content — not pinned to the bottom footer — matching the printed
+  // certificate, where this line sits right under the completion
+  // sentence rather than down with the signature/organization block.
+  cursorY -= 34;
   const dateX = width / 2;
-  const sigX = width - 150;
-
-  // Logo is entirely optional — drawn only when the program has one
-  // uploaded, never as a placeholder mark, per the "if not selected then
-  // not showing" requirement. Stacked above the "Issued by" caption
-  // (rather than to its left) and fit within a bounding box — a wide
-  // wordmark-style logo sized by height alone could compute a width wide
-  // enough to be drawn off the left edge of the page entirely.
-  if (logoImageBytes) {
-    try {
-      const image = await embedImageBytes(pdfDoc, logoImageBytes);
-      const maxLogoWidth = 130;
-      const maxLogoHeight = 34;
-      const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
-      const logoWidth = image.width * scale;
-      const logoHeight = image.height * scale;
-      page.drawImage(image, {
-        x: orgX - logoWidth / 2,
-        y: footerLineY + 4,
-        width: logoWidth,
-        height: logoHeight,
-      });
-    } catch {
-      // Missing/corrupt logo file: footer text still renders below.
-    }
-  }
-  zoneCenter(regular, 'Issued by', 8, orgX, footerLineY - 12, CERT_MUTED);
-  zoneBlock(bold, values.issued_by, 13, orgX, footerLineY - 30, 190, CERT_INK, 9);
-
-  // "ON THIS DAY" and the date sit on one baseline (label bold, date
-  // italic), with the rule underneath both — matching the org's printed
-  // certificate, rather than stacked with the rule above.
   const dateSize = fitFontSizeToWidth(italic, values.training_date, 12, 140, 8);
   const dayLabelWidth = bold.widthOfTextAtSize('ON THIS DAY', 10);
   const dateWidth = italic.widthOfTextAtSize(values.training_date, dateSize);
   const dayRowGap = 8;
   const dayRowTotalWidth = dayLabelWidth + dayRowGap + dateWidth;
-  const dayRowY = footerLineY + 8;
   let dayRowX = dateX - dayRowTotalWidth / 2;
-  page.drawText('ON THIS DAY', { x: dayRowX, y: dayRowY, size: 10, font: bold, color: rgb(...CERT_INK) });
+  page.drawText('ON THIS DAY', { x: dayRowX, y: cursorY, size: 10, font: bold, color: rgb(...CERT_INK) });
   dayRowX += dayLabelWidth + dayRowGap;
-  page.drawText(values.training_date, { x: dayRowX, y: dayRowY, size: dateSize, font: italic, color: rgb(...CERT_INK) });
+  page.drawText(values.training_date, { x: dayRowX, y: cursorY, size: dateSize, font: italic, color: rgb(...CERT_INK) });
+  cursorY -= 12;
   const dayRuleHalfWidth = Math.max(70, dayRowTotalWidth / 2 + 12);
   page.drawLine({
-    start: { x: dateX - dayRuleHalfWidth, y: footerLineY },
-    end: { x: dateX + dayRuleHalfWidth, y: footerLineY },
+    start: { x: dateX - dayRuleHalfWidth, y: cursorY },
+    end: { x: dateX + dayRuleHalfWidth, y: cursorY },
     thickness: 1,
     color: rgb(...CERT_GREEN),
   });
+
+  // Bottom footer: just two zones now — chief trainer's signature (left)
+  // and the supporting organization (right) — matching the printed
+  // certificate. Pinned near the bottom border rather than tied to
+  // cursorY, since "ON THIS DAY" above already absorbed the paragraph's
+  // variable length.
+  const footerLineY = 90;
+  const trainerX = 145;
+  const orgX = width - 150;
 
   if (signatureImageBytes) {
     try {
       const image = await embedImageBytes(pdfDoc, signatureImageBytes);
       // Fit within a box rather than scaling by width alone — a tall or
       // square signature scan sized by width could otherwise grow tall
-      // enough to overlap the paragraph above, especially now that the
-      // footer sits closer to it (see footerLineY above).
+      // enough to overlap the content above.
       const maxSigWidth = 140;
       const maxSigHeight = 55;
       const scale = Math.min(maxSigWidth / image.width, maxSigHeight / image.height);
       const sigWidth = image.width * scale;
       const sigHeight = image.height * scale;
-      page.drawImage(image, { x: sigX - sigWidth / 2, y: footerLineY + 6, width: sigWidth, height: sigHeight });
+      page.drawImage(image, { x: trainerX - sigWidth / 2, y: footerLineY + 6, width: sigWidth, height: sigHeight });
     } catch {
       // Missing/corrupt signature file: signature line still renders below.
     }
   }
-  page.drawLine({ start: { x: sigX - 70, y: footerLineY }, end: { x: sigX + 70, y: footerLineY }, thickness: 1, color: rgb(...CERT_GREEN) });
+  page.drawLine({ start: { x: trainerX - 70, y: footerLineY }, end: { x: trainerX + 70, y: footerLineY }, thickness: 1, color: rgb(...CERT_GREEN) });
   if (values.trainer_name) {
-    zoneCenter(bold, 'Chief Trainer', 10, sigX, footerLineY - 14, CERT_INK);
-    zoneBlock(italic, values.trainer_name, 12, sigX, footerLineY - 30, 190, CERT_INK, 8);
+    zoneCenter(bold, 'Chief Trainer', 10, trainerX, footerLineY - 14, CERT_INK);
+    zoneBlock(italic, values.trainer_name, 12, trainerX, footerLineY - 30, 190, CERT_INK, 8);
+  }
+
+  // Logo is entirely optional — drawn only when the program has one
+  // uploaded, never as a placeholder mark, per the "if not selected then
+  // not showing" requirement. When present, it's shown alone (no separate
+  // company-name text) since a real logo already carries the org's name —
+  // printing both is redundant. Falls back to the name as plain text only
+  // when no logo has been uploaded, so the information isn't lost.
+  zoneCenter(bold, 'Supported by', 11, orgX, footerLineY - 4, CERT_MUTED);
+  if (logoImageBytes) {
+    try {
+      const image = await embedImageBytes(pdfDoc, logoImageBytes);
+      const maxLogoWidth = 150;
+      const maxLogoHeight = 34;
+      const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
+      const logoWidth = image.width * scale;
+      const logoHeight = image.height * scale;
+      page.drawImage(image, {
+        x: orgX - logoWidth / 2,
+        y: footerLineY - 26,
+        width: logoWidth,
+        height: logoHeight,
+      });
+    } catch {
+      zoneBlock(bold, values.issued_by, 13, orgX, footerLineY - 22, 190, CERT_INK, 9);
+    }
+  } else {
+    zoneBlock(bold, values.issued_by, 13, orgX, footerLineY - 22, 190, CERT_INK, 9);
   }
 
   page.drawText(`Certificate ID: ${values.certificate_id}`, { x: 40, y: 40, size: 8, font: regular, color: rgb(...CERT_MUTED) });
