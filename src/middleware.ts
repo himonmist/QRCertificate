@@ -28,7 +28,12 @@ function buildCsp(nonce: string): string {
 
   return [
     "default-src 'self'",
-    "img-src 'self' data: blob:",
+    // Vercel Blob's public store host serves trainer signature and
+    // certificate template background images in production (see
+    // imageUrl.ts's TRUSTED_BLOB_HOST_PATTERN) — without this, those
+    // <img>/background-image references would be silently blocked by CSP,
+    // the same class of bug documented in SECURITY.md's CSP section.
+    "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
     "style-src 'self' 'unsafe-inline'",
     `script-src ${scriptSrc}`,
     "object-src 'none'",

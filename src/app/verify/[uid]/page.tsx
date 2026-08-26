@@ -27,9 +27,10 @@ export default async function VerifyCertificatePage({ params }: { params: { uid:
 
   if (result.rateLimited) {
     return (
-      <StatusShell tone="warn" title="Too many requests" subtitle="Please try again in a minute.">
-        <p className="text-sm text-gray-600">
-          This verification endpoint is rate-limited to protect against automated scraping.
+      <StatusShell badgeTag="tag-outline" badgeLabel="⚠ Too many requests" certId={params.uid}>
+        <p style={{ fontSize: 13, margin: 0 }}>
+          This verification endpoint is rate-limited to protect against automated scraping. Please
+          try again in a minute.
         </p>
       </StatusShell>
     );
@@ -37,8 +38,8 @@ export default async function VerifyCertificatePage({ params }: { params: { uid:
 
   if (result.status === 'not_found') {
     return (
-      <StatusShell tone="error" title="Not Found" subtitle={`Certificate ID: ${params.uid}`}>
-        <p className="text-sm text-gray-600">
+      <StatusShell badgeTag="tag-outline" badgeLabel="✕ Not found" certId={params.uid}>
+        <p style={{ fontSize: 13, margin: 0 }}>
           No certificate matches this ID. It may have been mistyped, or it does not exist.
         </p>
       </StatusShell>
@@ -47,118 +48,117 @@ export default async function VerifyCertificatePage({ params }: { params: { uid:
 
   if (result.status === 'invalid') {
     return (
-      <StatusShell tone="error" title="Invalid Certificate" subtitle={`Certificate ID: ${params.uid}`}>
-        <p className="text-sm text-gray-600">
+      <StatusShell badgeTag="tag-outline" badgeLabel="✕ Invalid certificate" certId={params.uid}>
+        <p style={{ fontSize: 13, margin: 0 }}>
           This certificate ID exists but failed an integrity check. It may have been tampered with.
         </p>
       </StatusShell>
     );
   }
 
-  const details = (
-    <dl className="grid grid-cols-1 gap-3 text-left">
-      <Detail label="Participant" value={`${result.participantName}${result.designation ? `, ${result.designation}` : ''}`} />
-      <Detail label="Program" value={result.programTitle} />
-      <Detail label="Organized By" value={result.organizedBy} />
-      <Detail label="Issued By" value={result.issuedBy} />
-      {result.trainerName && <Detail label="Trainer" value={result.trainerName} />}
-      <Detail
-        label="Training Date"
-        value={
-          result.trainingStartDate === result.trainingEndDate
-            ? formatDate(result.trainingStartDate)
-            : `${formatDate(result.trainingStartDate)} – ${formatDate(result.trainingEndDate)}`
-        }
-      />
-      {result.location && <Detail label="Location" value={result.location} />}
-      <Detail label="Issue Date" value={formatDate(result.issuedAt)} />
-      <Detail label="Certificate ID" value={result.certificateId ?? params.uid} mono />
-    </dl>
-  );
+  const details = [
+    { label: 'Participant', value: `${result.participantName}${result.designation ? `, ${result.designation}` : ''}` },
+    { label: 'Program', value: result.programTitle },
+    { label: 'Organized by', value: result.organizedBy },
+    { label: 'Issued by', value: result.issuedBy },
+    result.trainerName ? { label: 'Trainer', value: result.trainerName } : null,
+    {
+      label: 'Training date',
+      value:
+        result.trainingStartDate === result.trainingEndDate
+          ? formatDate(result.trainingStartDate)
+          : `${formatDate(result.trainingStartDate)} – ${formatDate(result.trainingEndDate)}`,
+    },
+    result.location ? { label: 'Location', value: result.location } : null,
+    { label: 'Issue date', value: formatDate(result.issuedAt) },
+  ].filter((d): d is { label: string; value: string } => Boolean(d && d.value));
 
   if (result.status === 'revoked') {
     return (
-      <StatusShell tone="warn" title="Revoked" subtitle={`Certificate ID: ${result.certificateId}`}>
-        {result.revokedReason && (
-          <p className="mb-4 text-sm text-gray-600">Reason: {result.revokedReason}</p>
-        )}
-        {details}
+      <StatusShell badgeTag="tag-outline" badgeLabel="⚠ Revoked" certId={result.certificateId ?? params.uid}>
+        {result.revokedReason && <p style={{ fontSize: 13, marginBottom: 'var(--space-4)' }}>Reason: {result.revokedReason}</p>}
+        <Details items={details} />
       </StatusShell>
     );
   }
 
   if (result.status === 'superseded') {
     return (
-      <StatusShell tone="warn" title="Superseded" subtitle={`Certificate ID: ${result.certificateId}`}>
+      <StatusShell badgeTag="tag-neutral" badgeLabel="Superseded" certId={result.certificateId ?? params.uid}>
         {result.supersededByUid && (
-          <p className="mb-4 text-sm text-gray-600">
+          <p style={{ fontSize: 13, marginBottom: 'var(--space-4)' }}>
             A newer version of this certificate was issued.{' '}
-            <Link href={`/verify/${result.supersededByUid}`} className="font-medium text-brand-700 underline">
-              View current certificate ({result.supersededByUid})
-            </Link>
+            <Link href={`/verify/${result.supersededByUid}`}>View current certificate ({result.supersededByUid})</Link>
           </p>
         )}
-        {details}
+        <Details items={details} />
       </StatusShell>
     );
   }
 
   return (
-    <StatusShell tone="success" title="Valid / Verified" subtitle={`Certificate ID: ${result.certificateId}`}>
-      {details}
-      <a
-        href={`/api/public/verify/${result.certificateId}/pdf`}
-        className="mt-6 inline-block rounded-md bg-brand-600 px-5 py-2.5 font-medium text-white hover:bg-brand-700"
-      >
+    <StatusShell badgeTag="tag-accent" badgeLabel="✓ Valid / Verified" certId={result.certificateId ?? params.uid}>
+      <Details items={details} />
+      <a href={`/api/public/verify/${result.certificateId}/pdf`} className="btn btn-primary btn-block" style={{ justifyContent: 'center', marginTop: 'var(--space-4)' }}>
         Download PDF
       </a>
     </StatusShell>
   );
 }
 
-function Detail({ label, value, mono }: { label: string; value?: string; mono?: boolean }) {
-  if (!value) return null;
+function Details({ items }: { items: { label: string; value: string }[] }) {
   return (
-    <div>
-      <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</dt>
-      <dd className={`text-sm text-gray-900 ${mono ? 'font-mono' : ''}`}>{value}</dd>
+    <div className="flex flex-col gap-3">
+      {items.map((item) => (
+        <div key={item.label}>
+          <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'color-mix(in srgb, var(--color-text) 55%, transparent)' }}>
+            {item.label}
+          </div>
+          <div style={{ fontSize: 14 }}>{item.value}</div>
+        </div>
+      ))}
     </div>
   );
 }
 
-const TONE_STYLES: Record<string, { badge: string; icon: string }> = {
-  success: { badge: 'bg-green-100 text-green-800', icon: '✅' },
-  warn: { badge: 'bg-amber-100 text-amber-800', icon: '⚠️' },
-  error: { badge: 'bg-red-100 text-red-800', icon: '❌' },
-};
-
 function StatusShell({
-  tone,
-  title,
-  subtitle,
+  badgeTag,
+  badgeLabel,
+  certId,
   children,
 }: {
-  tone: 'success' | 'warn' | 'error';
-  title: string;
-  subtitle?: string;
+  badgeTag: string;
+  badgeLabel: string;
+  certId: string;
   children?: React.ReactNode;
 }) {
-  const style = TONE_STYLES[tone] ?? TONE_STYLES.error!;
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-        <div className={`mb-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ${style!.badge}`}>
-          <span>{style!.icon}</span>
-          <span>{title}</span>
+    <div className="flex min-h-screen flex-col" style={{ background: 'var(--color-bg)' }}>
+      <header className="flex items-center gap-2 px-4 py-4" style={{ borderBottom: '2px solid var(--color-divider)' }}>
+        <div style={{ width: 16, height: 16, background: 'var(--color-accent)' }} />
+        <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 14 }}>
+          QRCertificate — Certificate Verification
+        </span>
+      </header>
+      <main className="flex flex-1 items-center justify-center px-4 py-6">
+        <div className="w-full" style={{ maxWidth: 420 }}>
+          <div className="card elev-md" style={{ padding: 'var(--space-6)' }}>
+            <span
+              className={`tag ${badgeTag}`}
+              style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 13, padding: '5px 14px', alignSelf: 'flex-start' }}
+            >
+              {badgeLabel}
+            </span>
+            <div style={{ fontFamily: 'var(--font-heading)', fontSize: 11, opacity: 0.6, margin: 'var(--space-1) 0 var(--space-4)' }}>
+              Certificate ID: {certId}
+            </div>
+            {children}
+          </div>
+          <p className="text-muted" style={{ textAlign: 'center', fontSize: 12, marginTop: 'var(--space-4)' }}>
+            <Link href="/verify">Verify another certificate</Link>
+          </p>
         </div>
-        {subtitle && <p className="mb-4 font-mono text-xs text-gray-500">{subtitle}</p>}
-        {children}
-      </div>
-      <p className="mt-6 text-center text-xs text-gray-400">
-        <Link href="/verify" className="underline">
-          Verify another certificate
-        </Link>
-      </p>
-    </main>
+      </main>
+    </div>
   );
 }

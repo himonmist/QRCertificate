@@ -1,6 +1,14 @@
 import type { Metadata } from 'next';
+import { Archivo } from 'next/font/google';
 import { headers } from 'next/headers';
 import './globals.css';
+
+const archivo = Archivo({
+  subsets: ['latin'],
+  weight: ['400', '600', '800'],
+  variable: '--font-archivo',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'QRCertificate',
@@ -19,8 +27,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   headers();
 
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">{children}</body>
+    <html lang="en" className={archivo.variable}>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

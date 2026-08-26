@@ -14,25 +14,37 @@ export default function VerifySearchPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 text-center">
-      <h1 className="mb-2 text-2xl font-bold text-brand-700">Verify a Certificate</h1>
-      <p className="mb-6 text-sm text-gray-600">
-        Scan the QR code on the certificate, or enter the certificate ID below.
-      </p>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <input
-          value={uid}
-          onChange={(e) => setUid(e.target.value)}
-          placeholder="e.g. MNC-2026-SDA-000123"
-          className="w-full rounded-md border border-gray-300 px-3 py-2.5 text-center text-sm tracking-wide focus:border-brand-600 focus:outline-none"
-        />
-        <button
-          type="submit"
-          className="rounded-md bg-brand-600 px-4 py-2.5 font-medium text-white hover:bg-brand-700"
-        >
-          Verify
-        </button>
-      </form>
-    </main>
+    <div className="flex min-h-screen flex-col" style={{ background: 'var(--color-bg)' }}>
+      <header className="flex items-center gap-2 px-4 py-4" style={{ borderBottom: '2px solid var(--color-divider)' }}>
+        <div style={{ width: 16, height: 16, background: 'var(--color-accent)' }} />
+        <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 14 }}>
+          QRCertificate — Certificate Verification
+        </span>
+      </header>
+      <main className="flex flex-1 items-center justify-center px-4 py-6">
+        <div className="w-full text-center" style={{ maxWidth: 420 }}>
+          <h1 className="mb-2">Verify a certificate</h1>
+          <p className="text-muted mb-6" style={{ fontSize: 13 }}>
+            Scan the QR code on the certificate, or enter its ID below.
+          </p>
+          <form onSubmit={handleSubmit}>
+            <div className="field" style={{ textAlign: 'left' }}>
+              <label htmlFor="uid">Certificate ID</label>
+              <input
+                id="uid"
+                value={uid}
+                onChange={(e) => setUid(e.target.value)}
+                placeholder="MNC-2026-SDA-000123"
+                className="input"
+                style={{ textAlign: 'center', letterSpacing: '0.04em' }}
+              />
+            </div>
+            <button type="submit" className="btn btn-primary btn-block" style={{ justifyContent: 'center' }}>
+              Verify
+            </button>
+          </form>
+        </div>
+      </main>
+    </div>
   );
 }

@@ -11,6 +11,26 @@ interface Certificate {
   program: { title: string };
 }
 
+const STATUS_TAG: Record<Certificate['status'], string> = {
+  active: 'tag-accent',
+  revoked: 'tag-outline',
+  superseded: 'tag-neutral',
+};
+
+function toCsv(certificates: Certificate[]): string {
+  const header = ['Certificate ID', 'Participant', 'Program', 'Status', 'Issued'];
+  const rows = certificates.map((c) => [
+    c.certificateUid,
+    c.participant.fullName,
+    c.program.title,
+    c.status,
+    c.issuedAt.slice(0, 10),
+  ]);
+  return [header, ...rows]
+    .map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+}
+
 export default function CertificatesPage() {
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [q, setQ] = useState('');
@@ -32,9 +52,10 @@ export default function CertificatesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleRevoke(uid: string) {
+  async function handleRevoke() {
+    if (!revokeTarget) return;
     setError(null);
-    const res = await fetch(`/api/certificates/${uid}/revoke`, {
+    const res = await fetch(`/api/certificates/${revokeTarget}/revoke`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ reason: revokeReason }),
@@ -58,115 +79,131 @@ export default function CertificatesPage() {
     load();
   }
 
+  function handleExport() {
+    const csv = toCsv(certificates);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'certificates.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold">Certificates</h1>
+      <h1 className="mb-6">Certificates</h1>
 
-      <div className="mb-4 flex flex-wrap gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
           placeholder="Search by name or certificate ID"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="input w-72"
+          className="input"
+          style={{ maxWidth: 320 }}
         />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="input">
+        <select value={status} onChange={(e) => setStatus(e.target.value)} className="input" style={{ maxWidth: 180 }}>
           <option value="">All statuses</option>
           <option value="active">Active</option>
           <option value="revoked">Revoked</option>
           <option value="superseded">Superseded</option>
         </select>
-        <button onClick={load} className="rounded-md border border-gray-300 px-3 py-2 text-sm">
+        <button onClick={load} className="btn btn-secondary">
           Search
         </button>
+        <button onClick={handleExport} className="btn btn-ghost" style={{ marginLeft: 'auto' }}>
+          Export CSV
+        </button>
       </div>
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+      {error && <p className="mb-4" style={{ color: 'var(--color-accent-700)', fontSize: 13 }}>{error}</p>}
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-            <tr>
-              <th className="px-4 py-3">Certificate ID</th>
-              <th className="px-4 py-3">Participant</th>
-              <th className="px-4 py-3">Program</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3" />
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Certificate ID</th>
+            <th>Participant</th>
+            <th>Program</th>
+            <th>Status</th>
+            <th>Issued</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {certificates.map((cert) => (
+            <tr key={cert.id}>
+              <td style={{ fontFamily: 'var(--font-heading)', fontSize: 12 }}>{cert.certificateUid}</td>
+              <td>{cert.participant.fullName}</td>
+              <td>{cert.program.title}</td>
+              <td>
+                <span className={`tag ${STATUS_TAG[cert.status]}`}>{cert.status}</span>
+              </td>
+              <td>{cert.issuedAt.slice(0, 10)}</td>
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                <a href={`/api/certificates/${cert.certificateUid}/pdf`} target="_blank" rel="noreferrer" className="btn btn-ghost">
+                  PDF
+                </a>
+                <a href={`/verify/${cert.certificateUid}`} target="_blank" rel="noreferrer" className="btn btn-ghost">
+                  Verify page
+                </a>
+                {cert.status === 'active' && (
+                  <button
+                    onClick={() => {
+                      setRevokeTarget(cert.certificateUid);
+                      setRevokeReason('');
+                    }}
+                    className="btn btn-ghost"
+                    style={{ color: 'var(--color-accent-700)' }}
+                  >
+                    Revoke
+                  </button>
+                )}
+                {cert.status !== 'superseded' && (
+                  <button onClick={() => handleReissue(cert.certificateUid)} className="btn btn-ghost">
+                    Reissue
+                  </button>
+                )}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {certificates.map((cert) => (
-              <tr key={cert.id} className="border-t border-gray-100">
-                <td className="px-4 py-3 font-mono text-xs">{cert.certificateUid}</td>
-                <td className="px-4 py-3">{cert.participant.fullName}</td>
-                <td className="px-4 py-3">{cert.program.title}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      cert.status === 'active'
-                        ? 'bg-green-100 text-green-700'
-                        : cert.status === 'revoked'
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-amber-100 text-amber-700'
-                    }`}
-                  >
-                    {cert.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right text-xs">
-                  <a
-                    href={`/api/certificates/${cert.certificateUid}/pdf`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mr-3 font-medium text-brand-700 hover:underline"
-                  >
-                    PDF
-                  </a>
-                  <a
-                    href={`/verify/${cert.certificateUid}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mr-3 font-medium text-brand-700 hover:underline"
-                  >
-                    Verify Page
-                  </a>
-                  {cert.status === 'active' && (
-                    <>
-                      {revokeTarget === cert.certificateUid ? (
-                        <span className="inline-flex items-center gap-2">
-                          <input
-                            placeholder="Reason"
-                            value={revokeReason}
-                            onChange={(e) => setRevokeReason(e.target.value)}
-                            className="input h-7 w-32 text-xs"
-                          />
-                          <button onClick={() => handleRevoke(cert.certificateUid)} className="font-medium text-red-700 hover:underline">
-                            Confirm
-                          </button>
-                        </span>
-                      ) : (
-                        <button onClick={() => setRevokeTarget(cert.certificateUid)} className="mr-3 font-medium text-red-700 hover:underline">
-                          Revoke
-                        </button>
-                      )}
-                    </>
-                  )}
-                  {cert.status !== 'superseded' && (
-                    <button onClick={() => handleReissue(cert.certificateUid)} className="font-medium text-gray-700 hover:underline">
-                      Reissue
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {certificates.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
-                  No certificates found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          ))}
+          {certificates.length === 0 && (
+            <tr>
+              <td colSpan={6} className="text-muted">
+                No certificates found.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {revokeTarget && (
+        <div className="dialog-backdrop" onClick={() => setRevokeTarget(null)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-title">Revoke certificate</div>
+            <p className="dialog-body">
+              This will mark certificate <strong>{revokeTarget}</strong> as revoked. Its public
+              verification page will show the revocation and reason to anyone who checks it. This
+              cannot be undone directly — the certificate would need to be reissued.
+            </p>
+            <div className="field">
+              <label>Reason</label>
+              <input
+                value={revokeReason}
+                onChange={(e) => setRevokeReason(e.target.value)}
+                className="input"
+                autoFocus
+              />
+            </div>
+            <div className="dialog-actions">
+              <button className="btn btn-secondary" onClick={() => setRevokeTarget(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleRevoke}>
+                Confirm revoke
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
