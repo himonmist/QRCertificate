@@ -316,7 +316,7 @@ async function drawDefaultCertificateDesign(
   cursorY = drawCenteredBlock(page, nameFont, values.participant_name, 28, cursorY, contentMaxWidth, width, CERT_INK, 16);
 
   cursorY -= 30;
-  drawCenteredParagraph(
+  cursorY = drawCenteredParagraph(
     page,
     [
       { text: 'He/She has successfully completed', font: regular },
@@ -357,20 +357,36 @@ async function drawDefaultCertificateDesign(
     lines.forEach((line, i) => zoneCenter(font, line, size, cx, topY - i * lineHeight, color));
   };
 
-  const footerLineY = 120;
+  // The footer follows directly beneath the paragraph with a fixed gap,
+  // rather than sitting at a fixed distance from the bottom border — a
+  // short certificate previously left a large dead gap between the
+  // paragraph and "ON THIS DAY". Never lower than 100pt from the bottom,
+  // so a maximally-wrapped paragraph can't crowd the border.
+  const footerLineY = Math.max(100, cursorY - 60);
   const orgX = 145;
   const dateX = width / 2;
   const sigX = width - 150;
 
   // Logo is entirely optional — drawn only when the program has one
   // uploaded, never as a placeholder mark, per the "if not selected then
-  // not showing" requirement.
+  // not showing" requirement. Stacked above the "Issued by" caption
+  // (rather than to its left) and fit within a bounding box — a wide
+  // wordmark-style logo sized by height alone could compute a width wide
+  // enough to be drawn off the left edge of the page entirely.
   if (logoImageBytes) {
     try {
       const image = await embedImageBytes(pdfDoc, logoImageBytes);
-      const logoHeight = 30;
-      const logoWidth = (image.width / image.height) * logoHeight;
-      page.drawImage(image, { x: orgX - 100 - logoWidth, y: footerLineY - 27, width: logoWidth, height: logoHeight });
+      const maxLogoWidth = 130;
+      const maxLogoHeight = 34;
+      const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
+      const logoWidth = image.width * scale;
+      const logoHeight = image.height * scale;
+      page.drawImage(image, {
+        x: orgX - logoWidth / 2,
+        y: footerLineY + 4,
+        width: logoWidth,
+        height: logoHeight,
+      });
     } catch {
       // Missing/corrupt logo file: footer text still renders below.
     }
@@ -402,9 +418,16 @@ async function drawDefaultCertificateDesign(
   if (signatureImageBytes) {
     try {
       const image = await embedImageBytes(pdfDoc, signatureImageBytes);
-      const sigWidth = 130;
-      const scale = sigWidth / image.width;
-      page.drawImage(image, { x: sigX - sigWidth / 2, y: footerLineY + 6, width: sigWidth, height: image.height * scale });
+      // Fit within a box rather than scaling by width alone — a tall or
+      // square signature scan sized by width could otherwise grow tall
+      // enough to overlap the paragraph above, especially now that the
+      // footer sits closer to it (see footerLineY above).
+      const maxSigWidth = 140;
+      const maxSigHeight = 55;
+      const scale = Math.min(maxSigWidth / image.width, maxSigHeight / image.height);
+      const sigWidth = image.width * scale;
+      const sigHeight = image.height * scale;
+      page.drawImage(image, { x: sigX - sigWidth / 2, y: footerLineY + 6, width: sigWidth, height: sigHeight });
     } catch {
       // Missing/corrupt signature file: signature line still renders below.
     }
