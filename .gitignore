@@ -1,0 +1,39 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# env
+.env
+.env*.local
+
+# db
+/prisma/dev.db
+/prisma/dev.db-journal
+*.db
+*.db-journal
+
+# storage (generated at runtime; never delete certificate history via git)
+/storage/pdf/*
+/storage/qr/*
+!/storage/pdf/.gitkeep
+!/storage/qr/.gitkeep
+
+# runtime uploads (generated at runtime, not source)
+/public/uploads/signatures/*
+/public/uploads/logos/*
+/public/uploads/participants/*
+!/public/uploads/signatures/.gitkeep
+!/public/uploads/logos/.gitkeep
+!/public/uploads/participants/.gitkeep
+
+# logs
+npm-debug.log*
+*.log
+
+# OS
+.DS_Store
+
+# coverage
+/coverage

@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// SQLite has no native enum support in Prisma, so role/status/category
+// fields below are plain Strings. The allowed values are enforced in the
+// application layer — see src/lib/constants.ts (ADMIN_ROLES, TRAINER_STATUSES,
+// PROGRAM_CATEGORIES, PROGRAM_TRAINER_ROLES, CERTIFICATE_STATUSES) and the
+// corresponding zod schemas in src/lib/validation.ts.
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  logoUrl   String?
+  address   String?
+  createdAt DateTime @default(now())
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("admin") // super_admin | admin
+  createdAt    DateTime @default(now())
+
+  createdPrograms TrainingProgram[] @relation("ProgramCreator")
+  auditLogs       AuditLog[]
+}
+
+model Trainer {
+  id           String   @id @default(uuid())
+  name         String
+  designation  String?
+  organization String?
+  email        String   @unique
+  phone        String?
+  bio          String?
+  signatureUrl String?
+  status       String   @default("active") // active | inactive
+  createdAt    DateTime @default(now())
+
+  programLinks ProgramTrainer[]
+}
+
+model TrainingProgram {
+  id          String   @id @default(uuid())
+  title       String
+  category    String   @default("workshop") // workshop | course | seminar | certification
+  organizedBy String
+  supportedBy String?
+  issuedBy    String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  location    String?
+  duration    String?
+
+  templateId String?
+  template   CertificateTemplate? @relation(fields: [templateId], references: [id])
+
+  createdByAdminId String?
+  createdByAdmin   Admin?   @relation("ProgramCreator", fields: [createdByAdminId], references: [id])
+  createdAt        DateTime @default(now())
+
+  trainers     ProgramTrainer[]
+  participants Participant[]
+  certificates Certificate[]
+}
+
+model ProgramTrainer {
+  id        String @id @default(uuid())
+  programId String
+  trainerId String
+  role      String @default("trainer") // chief_trainer | trainer
+
+  program TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  trainer Trainer         @relation(fields: [trainerId], references: [id])
+
+  @@unique([programId, trainerId])
+}
+
+model Participant {
+  id           String   @id @default(uuid())
+  programId    String
+  fullName     String
+  designation  String?
+  organization String?
+  email        String?
+  phone        String?
+  photoUrl     String?
+  createdAt    DateTime @default(now())
+
+  program      TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  certificates Certificate[]
+
+  @@index([programId])
+  @@unique([programId, email])
+}
+
+model CertificateTemplate {
+  id            String   @id @default(uuid())
+  name          String
+  backgroundUrl String?
+  layoutJson    String // JSON string: placeholder positions, fonts, colors
+  createdAt     DateTime @default(now())
+
+  programs     TrainingProgram[]
+  certificates Certificate[]
+}
+
+model Certificate {
+  id               String    @id @default(uuid())
+  certificateUid   String    @unique // e.g. MNC-2026-SDA-000123
+  participantId    String
+  programId        String
+  templateId       String?
+  qrPayloadUrl     String
+  qrImageUrl       String?
+  pdfUrl           String?
+  verificationHash String
+  status           String    @default("active") // active | revoked | superseded
+  revokedReason    String?
+  revokedAt        DateTime?
+  supersededById   String?   @unique
+  issuedAt         DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+
+  participant  Participant          @relation(fields: [participantId], references: [id])
+  program      TrainingProgram      @relation(fields: [programId], references: [id])
+  template     CertificateTemplate? @relation(fields: [templateId], references: [id])
+  supersededBy Certificate?         @relation("Supersession", fields: [supersededById], references: [id])
+  supersedes   Certificate?         @relation("Supersession")
+
+  verificationLogs VerificationLog[]
+
+  @@index([programId])
+  @@index([participantId])
+  @@index([status])
+}
+
+model VerificationLog {
+  id            String   @id @default(uuid())
+  certificateId String
+  scannedAt     DateTime @default(now())
+  ipHash        String?
+  userAgent     String?
+
+  certificate Certificate @relation(fields: [certificateId], references: [id])
+
+  @@index([certificateId])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  adminId     String?
+  action      String
+  entity      String
+  entityId    String?
+  detailsJson String?
+  createdAt   DateTime @default(now())
+
+  admin Admin? @relation(fields: [adminId], references: [id])
+
+  @@index([entity, entityId])
+}
