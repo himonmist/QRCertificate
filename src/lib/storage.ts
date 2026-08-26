@@ -49,9 +49,18 @@ export async function saveUploadedImage(
   // leaks an internal path and gives an admin no idea what's actually
   // wrong. Fail with a clear, actionable message instead of attempting a
   // write we already know cannot succeed.
+  //
+  // VERCEL_ENV/VERCEL_URL are included in the message itself (rather than
+  // only logged) because this error is the only diagnostic signal that
+  // reaches an admin through the UI — see the "signature not showing"
+  // investigation in git history, where BLOB_READ_WRITE_TOKEN was
+  // confirmed present and Production-scoped in the dashboard, redeployed
+  // twice, and this still fired. Whatever's actually happening (wrong
+  // environment picked up by a dashboard "Redeploy", a token scoping
+  // quirk, etc.) needs to be visible without dashboard access to diagnose.
   if (process.env.VERCEL) {
     throw new Error(
-      'Image storage is not configured for this deployment. In the Vercel dashboard, add a Blob store (Storage tab → Create Database → Blob) and redeploy — this sets BLOB_READ_WRITE_TOKEN automatically.'
+      `Image storage is not configured for this deployment (BLOB_READ_WRITE_TOKEN is missing at runtime, env=${process.env.VERCEL_ENV ?? 'unknown'}, url=${process.env.VERCEL_URL ?? 'unknown'}). In the Vercel dashboard, confirm a Blob store is connected under Storage, that BLOB_READ_WRITE_TOKEN appears under Settings → Environment Variables scoped to Production, then trigger a new deployment (a git push, not just "Redeploy") and try again.`
     );
   }
 
