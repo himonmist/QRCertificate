@@ -98,6 +98,199 @@ function drawField(
   });
 }
 
+interface RichSegment {
+  text: string;
+  font: PDFFont;
+  size: number;
+  color?: [number, number, number];
+}
+
+function centeredX(font: PDFFont, text: string, size: number, pageWidth: number): number {
+  return pageWidth / 2 - font.widthOfTextAtSize(text, size) / 2;
+}
+
+function drawCentered(
+  page: PDFPage,
+  font: PDFFont,
+  text: string,
+  size: number,
+  y: number,
+  pageWidth: number,
+  color: [number, number, number] = [0.12, 0.12, 0.12]
+) {
+  const [r, g, b] = color;
+  page.drawText(text, { x: centeredX(font, text, size, pageWidth), y, size, font, color: rgb(r, g, b) });
+}
+
+/** Draws several differently-styled runs on one baseline, centered as a single line (e.g. "CERTIFICATE" + italic "of" + "PARTICIPATION"). */
+function drawCenteredRich(page: PDFPage, segments: RichSegment[], y: number, pageWidth: number, gap = 10) {
+  const widths = segments.map((s) => s.font.widthOfTextAtSize(s.text, s.size));
+  const total = widths.reduce((sum, w) => sum + w, 0) + gap * (segments.length - 1);
+  let x = pageWidth / 2 - total / 2;
+  segments.forEach((s, i) => {
+    const [r, g, b] = s.color ?? [0.12, 0.12, 0.12];
+    page.drawText(s.text, { x, y, size: s.size, font: s.font, color: rgb(r, g, b) });
+    x += widths[i]! + gap;
+  });
+}
+
+/** Draws a centered block of text, shrinking to fit and wrapping onto multiple lines if needed. Returns the y just below the last line drawn. */
+function drawCenteredBlock(
+  page: PDFPage,
+  font: PDFFont,
+  text: string,
+  baseSize: number,
+  topY: number,
+  maxWidth: number,
+  pageWidth: number,
+  color: [number, number, number] = [0.12, 0.12, 0.12],
+  minSize?: number
+): number {
+  const size = fitFontSizeToWidth(font, text, baseSize, maxWidth, minSize);
+  const lines = font.widthOfTextAtSize(text, size) > maxWidth ? wrapTextToLines(font, text, size, maxWidth) : [text];
+  const lineHeight = size * 1.25;
+  lines.forEach((line, i) => drawCentered(page, font, line, size, topY - i * lineHeight, pageWidth, color));
+  return topY - lines.length * lineHeight;
+}
+
+const CERT_GREEN: [number, number, number] = [0.05, 0.33, 0.19];
+const CERT_MUTED: [number, number, number] = [0.35, 0.33, 0.3];
+const CERT_INK: [number, number, number] = [0.12, 0.11, 0.1];
+const CERT_CREAM: [number, number, number] = [0.996, 0.984, 0.937];
+
+/**
+ * The platform's own certificate design (used whenever a program has no
+ * custom template background uploaded — the common case): an ornamental
+ * double green border on a cream ground, "Certificate of Participation"
+ * header, presented-to/name block, a completion paragraph, and left/center/
+ * right footer zones for the supporting organization, issue date, and
+ * chief trainer's signature — matching the org's real printed certificate.
+ */
+async function drawDefaultCertificateDesign(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  width: number,
+  height: number,
+  values: CertificateValues,
+  signatureImageBytes: Buffer | null | undefined
+): Promise<void> {
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const italic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+  const nameFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
+
+  const contentMaxWidth = width - 180;
+
+  page.drawRectangle({ x: 0, y: 0, width, height, color: rgb(...CERT_CREAM) });
+  page.drawRectangle({
+    x: 28,
+    y: 28,
+    width: width - 56,
+    height: height - 56,
+    borderColor: rgb(...CERT_GREEN),
+    borderWidth: 1.5,
+  });
+  page.drawRectangle({
+    x: 18,
+    y: 18,
+    width: width - 36,
+    height: height - 36,
+    borderColor: rgb(...CERT_GREEN),
+    borderWidth: 5,
+  });
+
+  let cursorY = height - 95;
+  drawCenteredRich(
+    page,
+    [
+      { text: 'CERTIFICATE', font: bold, size: 32 },
+      { text: 'of', font: italic, size: 24, color: CERT_GREEN },
+      { text: 'PARTICIPATION', font: bold, size: 32 },
+    ],
+    cursorY,
+    width
+  );
+
+  cursorY -= 32;
+  page.drawLine({ start: { x: width / 2 - 90, y: cursorY }, end: { x: width / 2 - 20, y: cursorY }, thickness: 1, color: rgb(...CERT_GREEN) });
+  page.drawLine({ start: { x: width / 2 + 20, y: cursorY }, end: { x: width / 2 + 90, y: cursorY }, thickness: 1, color: rgb(...CERT_GREEN) });
+  page.drawEllipse({ x: width / 2, y: cursorY, xScale: 4, yScale: 4, color: rgb(...CERT_GREEN) });
+
+  cursorY -= 34;
+  drawCentered(page, regular, 'THIS CERTIFICATE IS HEREWITH PRESENTED TO', 11, cursorY, width, CERT_MUTED);
+
+  cursorY -= 48;
+  cursorY = drawCenteredBlock(page, nameFont, values.participant_name, 28, cursorY, contentMaxWidth, width, CERT_INK, 16);
+
+  cursorY -= 28;
+  const completionLine = values.designation
+    ? `He/She (${values.designation}) has successfully completed`
+    : 'He/She has successfully completed';
+  drawCentered(page, regular, completionLine, 13, cursorY, width, CERT_INK);
+
+  cursorY -= 26;
+  cursorY = drawCenteredBlock(page, bold, `"${values.program_title}"`, 16, cursorY, contentMaxWidth, width, CERT_INK, 10);
+
+  cursorY -= 24;
+  const whereSuffix = values.location ? `, at ${values.location}` : '';
+  drawCenteredBlock(page, regular, `on ${values.training_date}${whereSuffix}.`, 12, cursorY, contentMaxWidth, width, CERT_INK, 9);
+
+  // Footer: three zones — supporting organization (left), issue date (center), chief trainer's signature (right).
+  const zoneCenter = (font: PDFFont, text: string, size: number, cx: number, y: number, color: [number, number, number]) => {
+    const w = font.widthOfTextAtSize(text, size);
+    page.drawText(text, { x: cx - w / 2, y, size, font, color: rgb(...color) });
+  };
+  // Like zoneCenter, but shrinks then wraps rather than letting a very long
+  // organization/trainer name run past this footer zone's bounds (the same
+  // overflow bug fixed for the main title, applied to the footer's zones).
+  const zoneBlock = (
+    font: PDFFont,
+    text: string,
+    baseSize: number,
+    cx: number,
+    topY: number,
+    maxWidth: number,
+    color: [number, number, number],
+    minSize: number
+  ) => {
+    const size = fitFontSizeToWidth(font, text, baseSize, maxWidth, minSize);
+    const lines = font.widthOfTextAtSize(text, size) > maxWidth ? wrapTextToLines(font, text, size, maxWidth) : [text];
+    const lineHeight = size * 1.15;
+    lines.forEach((line, i) => zoneCenter(font, line, size, cx, topY - i * lineHeight, color));
+  };
+
+  const footerLineY = 120;
+  const orgX = 145;
+  const dateX = width / 2;
+  const sigX = width - 150;
+
+  page.drawEllipse({ x: orgX - 100, y: footerLineY - 12, xScale: 6, yScale: 6, color: rgb(...CERT_GREEN) });
+  zoneCenter(regular, 'Supported by', 8, orgX, footerLineY - 12, CERT_MUTED);
+  zoneBlock(bold, values.organized_by, 13, orgX, footerLineY - 30, 190, CERT_INK, 9);
+
+  page.drawLine({ start: { x: dateX - 70, y: footerLineY }, end: { x: dateX + 70, y: footerLineY }, thickness: 1, color: rgb(...CERT_GREEN) });
+  zoneCenter(bold, 'ON THIS DAY', 10, dateX, footerLineY - 14, CERT_INK);
+  zoneBlock(italic, values.training_date, 12, dateX, footerLineY - 30, 190, CERT_INK, 8);
+
+  if (signatureImageBytes) {
+    try {
+      const image = await embedImageBytes(pdfDoc, signatureImageBytes);
+      const sigWidth = 130;
+      const scale = sigWidth / image.width;
+      page.drawImage(image, { x: sigX - sigWidth / 2, y: footerLineY + 6, width: sigWidth, height: image.height * scale });
+    } catch {
+      // Missing/corrupt signature file: signature line still renders below.
+    }
+  }
+  page.drawLine({ start: { x: sigX - 70, y: footerLineY }, end: { x: sigX + 70, y: footerLineY }, thickness: 1, color: rgb(...CERT_GREEN) });
+  if (values.trainer_name) {
+    zoneCenter(bold, 'Chief Trainer', 10, sigX, footerLineY - 14, CERT_INK);
+    zoneBlock(italic, values.trainer_name, 12, sigX, footerLineY - 30, 190, CERT_INK, 8);
+  }
+
+  page.drawText(`Certificate ID: ${values.certificate_id}`, { x: 40, y: 40, size: 8, font: regular, color: rgb(...CERT_MUTED) });
+}
+
 function looksLikePng(bytes: Buffer): boolean {
   return (
     bytes.length > 8 &&
@@ -121,15 +314,21 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
 
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([width, height]);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   if (input.backgroundImageBytes) {
+    // A program with a custom uploaded template: draw the uploaded
+    // background full-bleed and place each field at its configured
+    // position — this is the only path admins can reposition via layoutJson.
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const f = input.layout.fields;
+    const v = input.values;
+
     try {
       const image = await embedImageBytes(pdfDoc, input.backgroundImageBytes);
       page.drawImage(image, { x: 0, y: 0, width, height });
     } catch {
-      // Missing/corrupt background: fall back to a plain bordered page below.
+      // Missing/corrupt background: fall back to a plain bordered page.
       page.drawRectangle({
         x: 20,
         y: 20,
@@ -139,44 +338,41 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
         borderWidth: 3,
       });
     }
-  } else {
-    page.drawRectangle({
-      x: 20,
-      y: 20,
-      width: width - 40,
-      height: height - 40,
-      borderColor: rgb(0.09, 0.5, 0.3),
-      borderWidth: 3,
-    });
-  }
 
-  const f = input.layout.fields;
-  const v = input.values;
+    drawField(page, boldFont, f.participant_name, { x: width / 2, y: height * 0.58, size: 30, align: 'center' }, v.participant_name, width);
+    drawField(page, font, f.designation, { x: width / 2, y: height * 0.5, size: 14, align: 'center' }, v.designation ?? '', width);
+    drawField(page, boldFont, f.program_title, { x: width / 2, y: height * 0.4, size: 18, align: 'center' }, v.program_title, width);
+    drawField(page, font, f.organized_by, { x: width / 2, y: height * 0.32, size: 12, align: 'center' }, `Organized by: ${v.organized_by}`, width);
+    drawField(page, font, f.training_date, { x: width / 2, y: height * 0.25, size: 11, align: 'center' }, v.training_date, width);
+    drawField(page, font, f.trainer_name, { x: 160, y: 110, size: 12, align: 'center' }, v.trainer_name ?? '', width);
+    drawField(page, font, f.certificate_id, { x: width - 260, y: 40, size: 9 }, `Certificate ID: ${v.certificate_id}`, width);
 
-  drawField(page, boldFont, f.participant_name, { x: width / 2, y: height * 0.58, size: 30, align: 'center' }, v.participant_name, width);
-  drawField(page, font, f.designation, { x: width / 2, y: height * 0.5, size: 14, align: 'center' }, v.designation ?? '', width);
-  drawField(page, boldFont, f.program_title, { x: width / 2, y: height * 0.4, size: 18, align: 'center' }, v.program_title, width);
-  drawField(page, font, f.organized_by, { x: width / 2, y: height * 0.32, size: 12, align: 'center' }, `Organized by: ${v.organized_by}`, width);
-  drawField(page, font, f.training_date, { x: width / 2, y: height * 0.25, size: 11, align: 'center' }, v.training_date, width);
-  drawField(page, font, f.trainer_name, { x: 160, y: 110, size: 12, align: 'center' }, v.trainer_name ?? '', width);
-  drawField(page, font, f.certificate_id, { x: width - 260, y: 40, size: 9 }, `Certificate ID: ${v.certificate_id}`, width);
-
-  if (input.signatureImageBytes) {
-    try {
-      const image = await embedImageBytes(pdfDoc, input.signatureImageBytes);
-      const sigLayout = f.trainer_signature ?? { x: 100, y: 130, size: 130 };
-      const sigWidth = sigLayout.size ?? 130;
-      const scale = sigWidth / image.width;
-      page.drawImage(image, { x: sigLayout.x, y: sigLayout.y, width: sigWidth, height: image.height * scale });
-    } catch {
-      // Missing signature file: certificate still renders without it.
+    if (input.signatureImageBytes) {
+      try {
+        const image = await embedImageBytes(pdfDoc, input.signatureImageBytes);
+        const sigLayout = f.trainer_signature ?? { x: 100, y: 130, size: 130 };
+        const sigWidth = sigLayout.size ?? 130;
+        const scale = sigWidth / image.width;
+        page.drawImage(image, { x: sigLayout.x, y: sigLayout.y, width: sigWidth, height: image.height * scale });
+      } catch {
+        // Missing signature file: certificate still renders without it.
+      }
     }
-  }
 
-  const qrImage = await pdfDoc.embedPng(input.qrPngBuffer);
-  const qrLayout = f.qr_code ?? { x: width - 150, y: 90, size: 100 };
-  const qrSize = qrLayout.size ?? 100;
-  page.drawImage(qrImage, { x: qrLayout.x, y: qrLayout.y, width: qrSize, height: qrSize });
+    const qrImage = await pdfDoc.embedPng(input.qrPngBuffer);
+    const qrLayout = f.qr_code ?? { x: width - 150, y: 90, size: 100 };
+    const qrSize = qrLayout.size ?? 100;
+    page.drawImage(qrImage, { x: qrLayout.x, y: qrLayout.y, width: qrSize, height: qrSize });
+  } else {
+    // No custom template: the platform's own "Certificate of Participation"
+    // design (double green border, presented-to/name block, completion
+    // paragraph, organization/date/signature footer).
+    await drawDefaultCertificateDesign(pdfDoc, page, width, height, input.values, input.signatureImageBytes);
+
+    const qrImage = await pdfDoc.embedPng(input.qrPngBuffer);
+    const qrSize = 62;
+    page.drawImage(qrImage, { x: width - 40 - qrSize, y: height - 40 - qrSize, width: qrSize, height: qrSize });
+  }
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
