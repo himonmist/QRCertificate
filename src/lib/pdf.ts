@@ -21,22 +21,81 @@ export interface RenderCertificateInput {
   qrPngBuffer: Buffer;
 }
 
+const FIELD_MARGIN = 40;
+const MAX_WRAPPED_LINES = 3;
+
+// Long program titles or participant names, at a template's fixed font
+// size, can run past the printable page area — previously drawField just
+// drew at the configured size with no bound, so a big-enough string bled
+// off both edges of the certificate. Shrink to fit first, then wrap onto
+// up to a few lines as a last resort, rather than letting text overflow.
+export function wrapTextToLines(font: PDFFont, text: string, size: number, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+
+  if (lines.length > MAX_WRAPPED_LINES) {
+    const head = lines.slice(0, MAX_WRAPPED_LINES - 1);
+    const tail = lines.slice(MAX_WRAPPED_LINES - 1).join(' ');
+    return [...head, tail];
+  }
+  return lines;
+}
+
+/** Shrinks baseSize down to the largest size (no smaller than minSize) at which text fits within maxWidth. */
+export function fitFontSizeToWidth(
+  font: PDFFont,
+  text: string,
+  baseSize: number,
+  maxWidth: number,
+  minSize = Math.max(9, Math.round(baseSize * 0.55))
+): number {
+  let size = baseSize;
+  while (size > minSize && font.widthOfTextAtSize(text, size) > maxWidth) {
+    size -= 1;
+  }
+  return size;
+}
+
 function drawField(
   page: PDFPage,
   font: PDFFont,
   layout: CertificateFieldLayout | undefined,
   fallback: CertificateFieldLayout,
-  text: string
+  text: string,
+  pageWidth: number
 ) {
   if (!text) return;
   const resolved = layout ?? fallback;
-  const size = resolved.size ?? 14;
-  const textWidth = font.widthOfTextAtSize(text, size);
-  let x = resolved.x;
-  if (resolved.align === 'center') x = resolved.x - textWidth / 2;
-  else if (resolved.align === 'right') x = resolved.x - textWidth;
+  const baseSize = resolved.size ?? 14;
   const [r, g, b] = resolved.color ?? [0.12, 0.12, 0.12];
-  page.drawText(text, { x, y: resolved.y, size, font, color: rgb(r, g, b) });
+  const maxWidth = pageWidth - FIELD_MARGIN * 2;
+
+  const size = fitFontSizeToWidth(font, text, baseSize, maxWidth);
+
+  const lines =
+    font.widthOfTextAtSize(text, size) > maxWidth ? wrapTextToLines(font, text, size, maxWidth) : [text];
+
+  const lineHeight = size * 1.2;
+  const startY = resolved.y + ((lines.length - 1) * lineHeight) / 2;
+
+  lines.forEach((line, i) => {
+    const lineWidth = font.widthOfTextAtSize(line, size);
+    let x = resolved.x;
+    if (resolved.align === 'center') x = resolved.x - lineWidth / 2;
+    else if (resolved.align === 'right') x = resolved.x - lineWidth;
+    page.drawText(line, { x, y: startY - i * lineHeight, size, font, color: rgb(r, g, b) });
+  });
 }
 
 function looksLikePng(bytes: Buffer): boolean {
@@ -94,13 +153,13 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
   const f = input.layout.fields;
   const v = input.values;
 
-  drawField(page, boldFont, f.participant_name, { x: width / 2, y: height * 0.58, size: 30, align: 'center' }, v.participant_name);
-  drawField(page, font, f.designation, { x: width / 2, y: height * 0.5, size: 14, align: 'center' }, v.designation ?? '');
-  drawField(page, boldFont, f.program_title, { x: width / 2, y: height * 0.4, size: 18, align: 'center' }, v.program_title);
-  drawField(page, font, f.organized_by, { x: width / 2, y: height * 0.32, size: 12, align: 'center' }, `Organized by: ${v.organized_by}`);
-  drawField(page, font, f.training_date, { x: width / 2, y: height * 0.25, size: 11, align: 'center' }, v.training_date);
-  drawField(page, font, f.trainer_name, { x: 160, y: 110, size: 12, align: 'center' }, v.trainer_name ?? '');
-  drawField(page, font, f.certificate_id, { x: width - 260, y: 40, size: 9 }, `Certificate ID: ${v.certificate_id}`);
+  drawField(page, boldFont, f.participant_name, { x: width / 2, y: height * 0.58, size: 30, align: 'center' }, v.participant_name, width);
+  drawField(page, font, f.designation, { x: width / 2, y: height * 0.5, size: 14, align: 'center' }, v.designation ?? '', width);
+  drawField(page, boldFont, f.program_title, { x: width / 2, y: height * 0.4, size: 18, align: 'center' }, v.program_title, width);
+  drawField(page, font, f.organized_by, { x: width / 2, y: height * 0.32, size: 12, align: 'center' }, `Organized by: ${v.organized_by}`, width);
+  drawField(page, font, f.training_date, { x: width / 2, y: height * 0.25, size: 11, align: 'center' }, v.training_date, width);
+  drawField(page, font, f.trainer_name, { x: 160, y: 110, size: 12, align: 'center' }, v.trainer_name ?? '', width);
+  drawField(page, font, f.certificate_id, { x: width - 260, y: 40, size: 9 }, `Certificate ID: ${v.certificate_id}`, width);
 
   if (input.signatureImageBytes) {
     try {
