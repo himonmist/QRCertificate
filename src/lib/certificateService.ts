@@ -4,8 +4,9 @@ import { computeVerificationHash } from './crypto';
 import { generateQrPngBuffer } from './qr';
 import { renderCertificatePdf } from './pdf';
 import { parseLayoutJson } from './certificateLayout';
-import { savePrivateFile, resolvePublicUploadPath } from './storage';
+import { loadImageBytes } from './storage';
 import { deriveProgramCode } from './programCode';
+import { toCertificateValues, parseSnapshot, type CertificateSnapshot } from './certificateSnapshot';
 import type { Certificate, Participant, ProgramTrainer, Trainer, TrainingProgram, CertificateTemplate } from '@prisma/client';
 
 export interface GenerateOptions {
@@ -26,13 +27,6 @@ type ProgramWithRelations = TrainingProgram & {
   template: CertificateTemplate | null;
 };
 
-function formatDateRange(start: Date, end: Date): string {
-  const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric' };
-  const startStr = start.toLocaleDateString('en-US', options);
-  const endStr = end.toLocaleDateString('en-US', options);
-  return startStr === endStr ? startStr : `${startStr} – ${endStr}`;
-}
-
 function getAppUrl(): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (!appUrl) {
@@ -41,10 +35,35 @@ function getAppUrl(): string {
   return appUrl;
 }
 
+function buildSnapshot(
+  program: ProgramWithRelations,
+  participant: Participant,
+  certificateUid: string
+): CertificateSnapshot {
+  const chiefTrainer =
+    program.trainers.find((t) => t.role === 'chief_trainer')?.trainer ?? program.trainers[0]?.trainer;
+
+  return {
+    participantName: participant.fullName,
+    designation: participant.designation ?? undefined,
+    programTitle: program.title,
+    organizedBy: program.organizedBy,
+    issuedBy: program.issuedBy,
+    trainerName: chiefTrainer?.name,
+    trainingStartDate: program.startDate.toISOString(),
+    trainingEndDate: program.endDate.toISOString(),
+    location: program.location ?? undefined,
+    certificateId: certificateUid,
+  };
+}
+
 /**
- * Renders the QR + PDF assets for one participant and persists the
- * Certificate row. Shared by both first-time generation and reissue so the
- * two paths can never drift (same hash inputs, same file layout).
+ * Persists the Certificate row with a frozen snapshot of every displayed
+ * field. Shared by both first-time generation and reissue so the two paths
+ * can never drift (same hash inputs, same snapshot shape). Does NOT render
+ * or store the PDF/QR bytes — those are rendered on demand from this
+ * snapshot (see renderCertificateAssets) so nothing depends on writing to
+ * a local disk, which doesn't persist on serverless hosts like Vercel.
  */
 async function buildAndPersistCertificate(
   program: ProgramWithRelations,
@@ -60,39 +79,7 @@ async function buildAndPersistCertificate(
     programId: program.id,
     issuedAt: issuedAt.toISOString(),
   });
-
-  const layout = parseLayoutJson(program.template?.layoutJson);
-  const backgroundImagePath = program.template?.backgroundUrl
-    ? resolvePublicUploadPath(program.template.backgroundUrl)
-    : null;
-  const chiefTrainer =
-    program.trainers.find((t) => t.role === 'chief_trainer')?.trainer ?? program.trainers[0]?.trainer;
-  const signatureImagePath = chiefTrainer?.signatureUrl
-    ? resolvePublicUploadPath(chiefTrainer.signatureUrl)
-    : null;
-  const trainingDateLabel = formatDateRange(program.startDate, program.endDate);
-
-  const qrBuffer = await generateQrPngBuffer(qrPayloadUrl);
-  await savePrivateFile('qr', `${certificateUid}.png`, qrBuffer);
-
-  const pdfBuffer = await renderCertificatePdf({
-    layout,
-    backgroundImagePath,
-    signatureImagePath,
-    values: {
-      participant_name: participant.fullName,
-      designation: participant.designation ?? undefined,
-      program_title: program.title,
-      organized_by: program.organizedBy,
-      issued_by: program.issuedBy,
-      trainer_name: chiefTrainer?.name,
-      training_date: trainingDateLabel,
-      location: program.location ?? undefined,
-      certificate_id: certificateUid,
-    },
-    qrPngBuffer: qrBuffer,
-  });
-  await savePrivateFile('pdf', `${certificateUid}.pdf`, pdfBuffer);
+  const snapshot = buildSnapshot(program, participant, certificateUid);
 
   return prisma.certificate.create({
     data: {
@@ -104,6 +91,7 @@ async function buildAndPersistCertificate(
       qrImageUrl: `/api/certificates/${certificateUid}/qr`,
       pdfUrl: `/api/certificates/${certificateUid}/pdf`,
       verificationHash,
+      renderedSnapshotJson: JSON.stringify(snapshot),
       status: 'active',
       issuedAt,
     },
@@ -214,6 +202,9 @@ export async function reissueCertificate(oldCertificateUid: string): Promise<Cer
     sequence,
   });
 
+  // Reissue re-snapshots current participant/program data (a correction may
+  // be exactly why it's being reissued), unlike a plain re-render of an
+  // existing certificate, which must never change its frozen snapshot.
   const newCertificate = await buildAndPersistCertificate(old.program, old.participant, certificateUid);
 
   await prisma.certificate.update({
@@ -222,4 +213,53 @@ export async function reissueCertificate(oldCertificateUid: string): Promise<Cer
   });
 
   return newCertificate;
+}
+
+export interface RenderedCertificateAssets {
+  pdf: Buffer;
+  qr: Buffer;
+}
+
+/**
+ * Renders a previously-issued certificate's PDF + QR on demand from its
+ * frozen snapshot, rather than reading a file saved at generation time.
+ * Deterministic given the same DB state (aside from the template's
+ * background image / trainer's signature image, which are looked up live —
+ * see SECURITY.md for that documented tradeoff). Returns null if no such
+ * certificate exists.
+ */
+export async function renderCertificateAssets(certificateUid: string): Promise<RenderedCertificateAssets | null> {
+  const certificate = await prisma.certificate.findUnique({
+    where: { certificateUid },
+    include: {
+      program: { include: { trainers: { include: { trainer: true } }, template: true } },
+    },
+  });
+  if (!certificate) return null;
+
+  const snapshot = parseSnapshot(certificate.renderedSnapshotJson);
+  const values = toCertificateValues(snapshot);
+
+  const layout = parseLayoutJson(certificate.program.template?.layoutJson);
+  const chiefTrainer =
+    certificate.program.trainers.find((t) => t.role === 'chief_trainer')?.trainer ??
+    certificate.program.trainers[0]?.trainer;
+
+  const [backgroundImageBytes, signatureImageBytes, qrBuffer] = await Promise.all([
+    certificate.program.template?.backgroundUrl
+      ? loadImageBytes(certificate.program.template.backgroundUrl)
+      : Promise.resolve(null),
+    chiefTrainer?.signatureUrl ? loadImageBytes(chiefTrainer.signatureUrl) : Promise.resolve(null),
+    generateQrPngBuffer(certificate.qrPayloadUrl),
+  ]);
+
+  const pdfBuffer = await renderCertificatePdf({
+    layout,
+    backgroundImageBytes,
+    signatureImageBytes,
+    values,
+    qrPngBuffer: qrBuffer,
+  });
+
+  return { pdf: pdfBuffer, qr: qrBuffer };
 }

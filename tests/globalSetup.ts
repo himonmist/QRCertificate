@@ -1,18 +1,25 @@
-import { copyFileSync, existsSync, unlinkSync } from 'node:fs';
-import path from 'node:path';
-
-const sourceDb = path.resolve(__dirname, '..', 'prisma', 'dev.db');
-const testDb = path.resolve(__dirname, 'test.db');
+import { execSync } from 'node:child_process';
+import { getAdminDatabaseUrl, getTestDatabaseUrl, getTestDatabaseName } from './dbUrl';
 
 export default async function setup() {
-  if (!existsSync(sourceDb)) {
-    throw new Error('prisma/dev.db not found — run `npx prisma migrate dev` before testing');
-  }
-  copyFileSync(sourceDb, testDb);
+  const adminUrl = getAdminDatabaseUrl();
+  const testUrl = getTestDatabaseUrl();
+  const testDbName = getTestDatabaseName();
+
+  execSync(`psql "${adminUrl}" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS ${testDbName}"`, {
+    stdio: 'inherit',
+  });
+  execSync(`psql "${adminUrl}" -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${testDbName}"`, {
+    stdio: 'inherit',
+  });
+  execSync('npx prisma migrate deploy', {
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL: testUrl },
+  });
 
   return async () => {
-    for (const file of [testDb, `${testDb}-journal`]) {
-      if (existsSync(file)) unlinkSync(file);
-    }
+    execSync(`psql "${adminUrl}" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS ${testDbName}"`, {
+      stdio: 'ignore',
+    });
   };
 }

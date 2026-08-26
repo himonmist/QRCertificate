@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isTrustedImageReference } from './imageUrl';
 
 const PUBLIC_UPLOADS_ROOT = path.resolve(process.cwd(), 'public', 'uploads');
-const PRIVATE_STORAGE_ROOT = path.resolve(process.cwd(), 'storage');
 
 export const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB
@@ -15,10 +15,13 @@ const EXTENSION_BY_MIME: Record<string, string> = {
 };
 
 /**
- * Saves an uploaded image under public/uploads/<category>/ using a
- * server-generated random filename (never the client-supplied name) so a
- * crafted filename cannot escape the upload directory or overwrite another
- * file. Returns the public URL path to store on the record.
+ * Saves an uploaded image using Vercel Blob when configured (required for
+ * serverless hosts like Vercel, whose filesystem doesn't persist between
+ * invocations), falling back to local disk under public/uploads/<category>/
+ * for local development. Either way, the filename is server-generated
+ * (never the client-supplied name), so a crafted filename cannot escape
+ * the upload directory or overwrite another file. Returns the URL to store
+ * on the record.
  */
 export async function saveUploadedImage(
   category: 'signatures' | 'logos' | 'participants',
@@ -31,39 +34,21 @@ export async function saveUploadedImage(
     throw new Error('File too large. Maximum size is 2MB.');
   }
 
-  const dir = path.join(PUBLIC_UPLOADS_ROOT, category);
-  await mkdir(dir, { recursive: true });
-
   const extension = EXTENSION_BY_MIME[file.type] ?? 'bin';
   const filename = `${randomUUID()}.${extension}`;
-  const filePath = path.join(dir, filename);
+  const key = `uploads/${category}/${filename}`;
 
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(filePath, buffer);
-
-  return `/uploads/${category}/${filename}`;
-}
-
-export async function savePrivateFile(
-  category: 'pdf' | 'qr',
-  filename: string,
-  data: Buffer
-): Promise<string> {
-  if (!/^[a-zA-Z0-9_-]+\.[a-z0-9]+$/.test(filename)) {
-    throw new Error('Invalid filename');
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const { put } = await import('@vercel/blob');
+    const blob = await put(key, file, { access: 'public', contentType: file.type });
+    return blob.url;
   }
-  const dir = path.join(PRIVATE_STORAGE_ROOT, category);
+
+  const dir = path.join(PUBLIC_UPLOADS_ROOT, category);
   await mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, filename);
-  await writeFile(filePath, data);
-  return filePath;
-}
-
-export function privateFilePath(category: 'pdf' | 'qr', filename: string): string {
-  if (!/^[a-zA-Z0-9_-]+\.[a-z0-9]+$/.test(filename)) {
-    throw new Error('Invalid filename');
-  }
-  return path.join(PRIVATE_STORAGE_ROOT, category, filename);
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await writeFile(path.join(dir, filename), buffer);
+  return `/uploads/${category}/${filename}`;
 }
 
 /**
@@ -74,11 +59,41 @@ export function privateFilePath(category: 'pdf' | 'qr', filename: string): strin
  * path-traversal payload can never reach fs.readFile even if it somehow
  * ends up stored.
  */
-export function resolvePublicUploadPath(url: string): string | null {
+function resolvePublicUploadPath(url: string): string | null {
   const resolved = path.resolve(PUBLIC_UPLOADS_ROOT, '..', url.replace(/^\//, ''));
   const relative = path.relative(PUBLIC_UPLOADS_ROOT, resolved);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
     return null;
   }
   return resolved;
+}
+
+/**
+ * Loads the bytes for a previously-saved image reference — a local
+ * "/uploads/..." path or an https:// URL on our trusted Blob host (see
+ * isTrustedImageReference) — used when embedding a trainer signature or
+ * template background into a rendered certificate PDF. Returns null for
+ * anything untrusted, missing, or unreachable rather than throwing, since a
+ * missing signature/background should degrade the certificate, not break it.
+ */
+export async function loadImageBytes(reference: string): Promise<Buffer | null> {
+  if (!isTrustedImageReference(reference)) return null;
+
+  if (reference.startsWith('/uploads/')) {
+    const filePath = resolvePublicUploadPath(reference);
+    if (!filePath) return null;
+    try {
+      return await readFile(filePath);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const response = await fetch(reference);
+    if (!response.ok) return null;
+    return Buffer.from(await response.arrayBuffer());
+  } catch {
+    return null;
+  }
 }

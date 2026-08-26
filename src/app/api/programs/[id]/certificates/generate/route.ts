@@ -6,6 +6,13 @@ import { getAdminContext } from '@/lib/adminContext';
 import { generateCertificatesForProgram } from '@/lib/certificateService';
 import { logAudit } from '@/lib/audit';
 
+// Bulk generation renders a PDF+QR per participant synchronously in the
+// request (see certificateService.ts) — fine at modest scale, but a large
+// batch can exceed the default serverless timeout. Extends it on Vercel;
+// ignored elsewhere. For very large programs, move this to a background
+// queue instead of raising this further — see README.md.
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const admin = getAdminContext(request);
   if (!admin) return unauthorized();

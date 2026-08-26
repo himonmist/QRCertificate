@@ -3,6 +3,7 @@ import { prisma } from './db';
 import { isValidCertificateUidFormat } from './certificateId';
 import { verifyHash } from './crypto';
 import { publicVerifyRateLimiter } from './rateLimit';
+import { parseSnapshot } from './certificateSnapshot';
 
 export interface VerifyCertificateResult {
   rateLimited: boolean;
@@ -46,8 +47,6 @@ export async function verifyCertificate(
   const certificate = await prisma.certificate.findUnique({
     where: { certificateUid: uid },
     include: {
-      participant: true,
-      program: { include: { trainers: { include: { trainer: true } } } },
       supersededBy: { select: { certificateUid: true } },
     },
   });
@@ -78,22 +77,23 @@ export async function verifyCertificate(
     return { rateLimited: false, verified: false, status: 'invalid' };
   }
 
-  const chiefTrainer =
-    certificate.program.trainers.find((t) => t.role === 'chief_trainer')?.trainer ??
-    certificate.program.trainers[0]?.trainer;
+  // Display fields come from the snapshot frozen at issuance, never from a
+  // live join — a later edit to the participant/program record must not be
+  // able to silently rewrite what an already-issued certificate shows.
+  const snapshot = parseSnapshot(certificate.renderedSnapshotJson);
 
   const base = {
     certificateId: certificate.certificateUid,
-    participantName: certificate.participant.fullName,
-    designation: certificate.participant.designation,
-    programTitle: certificate.program.title,
-    organizedBy: certificate.program.organizedBy,
-    issuedBy: certificate.program.issuedBy,
-    trainerName: chiefTrainer?.name ?? null,
+    participantName: snapshot.participantName,
+    designation: snapshot.designation ?? null,
+    programTitle: snapshot.programTitle,
+    organizedBy: snapshot.organizedBy,
+    issuedBy: snapshot.issuedBy,
+    trainerName: snapshot.trainerName ?? null,
     issuedAt: certificate.issuedAt.toISOString(),
-    trainingStartDate: certificate.program.startDate.toISOString(),
-    trainingEndDate: certificate.program.endDate.toISOString(),
-    location: certificate.program.location,
+    trainingStartDate: snapshot.trainingStartDate,
+    trainingEndDate: snapshot.trainingEndDate,
+    location: snapshot.location ?? null,
   };
 
   if (certificate.status === 'revoked') {

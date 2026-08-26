@@ -1,5 +1,4 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
-import { readFile } from 'node:fs/promises';
 import type { CertificateFieldLayout, CertificateLayout } from './certificateLayout';
 
 export interface CertificateValues {
@@ -16,8 +15,8 @@ export interface CertificateValues {
 
 export interface RenderCertificateInput {
   layout: CertificateLayout;
-  backgroundImagePath?: string | null;
-  signatureImagePath?: string | null;
+  backgroundImageBytes?: Buffer | null;
+  signatureImageBytes?: Buffer | null;
   values: CertificateValues;
   qrPngBuffer: Buffer;
 }
@@ -40,9 +39,20 @@ function drawField(
   page.drawText(text, { x, y: resolved.y, size, font, color: rgb(r, g, b) });
 }
 
-async function embedImageFile(pdfDoc: PDFDocument, filePath: string) {
-  const bytes = await readFile(filePath);
-  return filePath.toLowerCase().endsWith('.png') ? pdfDoc.embedPng(bytes) : pdfDoc.embedJpg(bytes);
+function looksLikePng(bytes: Buffer): boolean {
+  return (
+    bytes.length > 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  );
+}
+
+// Sniffs the magic bytes rather than trusting a file extension/content-type,
+// since these bytes may have come from a remote fetch (see loadImageBytes).
+async function embedImageBytes(pdfDoc: PDFDocument, bytes: Buffer) {
+  return looksLikePng(bytes) ? pdfDoc.embedPng(bytes) : pdfDoc.embedJpg(bytes);
 }
 
 /** Renders a print-ready certificate PDF from a layout + field values + QR PNG. */
@@ -55,9 +65,9 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  if (input.backgroundImagePath) {
+  if (input.backgroundImageBytes) {
     try {
-      const image = await embedImageFile(pdfDoc, input.backgroundImagePath);
+      const image = await embedImageBytes(pdfDoc, input.backgroundImageBytes);
       page.drawImage(image, { x: 0, y: 0, width, height });
     } catch {
       // Missing/corrupt background: fall back to a plain bordered page below.
@@ -92,9 +102,9 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
   drawField(page, font, f.trainer_name, { x: 160, y: 110, size: 12, align: 'center' }, v.trainer_name ?? '');
   drawField(page, font, f.certificate_id, { x: width - 260, y: 40, size: 9 }, `Certificate ID: ${v.certificate_id}`);
 
-  if (input.signatureImagePath) {
+  if (input.signatureImageBytes) {
     try {
-      const image = await embedImageFile(pdfDoc, input.signatureImagePath);
+      const image = await embedImageBytes(pdfDoc, input.signatureImageBytes);
       const sigLayout = f.trainer_signature ?? { x: 100, y: 130, size: 130 };
       const sigWidth = sigLayout.size ?? 130;
       const scale = sigWidth / image.width;

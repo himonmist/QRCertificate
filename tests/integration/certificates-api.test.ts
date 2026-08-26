@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync } from 'node:fs';
 import { NextRequest } from 'next/server';
 import { POST as createTrainer } from '@/app/api/trainers/route';
 import { POST as createProgram } from '@/app/api/programs/route';
@@ -12,10 +11,10 @@ import { POST as revokeCertificate } from '@/app/api/certificates/[uid]/revoke/r
 import { POST as reissueCertificate } from '@/app/api/certificates/[uid]/reissue/route';
 import { GET as getCertificatePdf } from '@/app/api/certificates/[uid]/pdf/route';
 import { GET as getCertificateQr } from '@/app/api/certificates/[uid]/qr/route';
+import { GET as publicVerify } from '@/app/api/public/verify/[uid]/route';
 import { prisma } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { verifyHash } from '@/lib/crypto';
-import { privateFilePath } from '@/lib/storage';
 
 let ADMIN_HEADERS: Record<string, string>;
 
@@ -106,8 +105,22 @@ describe('Certificate generation engine', () => {
     expect(new Set(uids).size).toBe(2);
     for (const uid of uids) {
       expect(uid).toMatch(/^MNC-2026-[A-Z0-9]+-\d{6}$/);
-      expect(existsSync(privateFilePath('pdf', `${uid}.pdf`))).toBe(true);
-      expect(existsSync(privateFilePath('qr', `${uid}.png`))).toBe(true);
+
+      const pdfRes = await getCertificatePdf(
+        new NextRequest(`http://localhost:3000/api/certificates/${uid}/pdf`, { headers: ADMIN_HEADERS }),
+        { params: { uid } }
+      );
+      expect(pdfRes.status).toBe(200);
+      const pdfBytes = Buffer.from(await pdfRes.arrayBuffer());
+      expect(pdfBytes.subarray(0, 5).toString('utf-8')).toBe('%PDF-');
+
+      const qrRes = await getCertificateQr(
+        new NextRequest(`http://localhost:3000/api/certificates/${uid}/qr`, { headers: ADMIN_HEADERS }),
+        { params: { uid } }
+      );
+      expect(qrRes.status).toBe(200);
+      const qrBytes = Buffer.from(await qrRes.arrayBuffer());
+      expect(qrBytes.subarray(1, 4).toString('utf-8')).toBe('PNG'); // PNG magic bytes
     }
 
     const stored = await prisma.certificate.findUnique({ where: { certificateUid: uids[0] } });
@@ -198,5 +211,41 @@ describe('Certificate generation engine', () => {
     const { certificate: oldDetail } = await oldDetailRes.json();
     expect(oldDetail.status).toBe('superseded');
     expect(oldDetail.supersededBy.certificateUid).toBe(newCert.certificateUid);
+  });
+
+  it('keeps an already-issued certificate\'s displayed data frozen even after the program is edited', async () => {
+    const { program } = await setupProgramWithParticipants(1);
+    const genRes = await generateCertificates(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/certificates/generate`, 'POST', {
+        prefix: 'MNC',
+      }),
+      { params: { id: program.id } }
+    );
+    const { results } = await genRes.json();
+    const uid = results[0].certificateUid;
+
+    // Simulate an admin correcting the program's title *after* certificates
+    // were already issued under the old title.
+    await prisma.trainingProgram.update({
+      where: { id: program.id },
+      data: { title: 'Renamed After Issuance' },
+    });
+
+    const verifyRes = await publicVerify(
+      new NextRequest(`http://localhost:3000/api/public/verify/${uid}`, {
+        headers: { 'x-forwarded-for': `203.0.113.${Math.floor(Math.random() * 250) + 1}` },
+      }),
+      { params: { uid } }
+    );
+    const verifyJson = await verifyRes.json();
+    expect(verifyJson.programTitle).toBe('Certificate Engine Test Program');
+    expect(verifyJson.programTitle).not.toBe('Renamed After Issuance');
+
+    const pdfRes = await getCertificatePdf(
+      new NextRequest(`http://localhost:3000/api/certificates/${uid}/pdf`, { headers: ADMIN_HEADERS }),
+      { params: { uid } }
+    );
+    expect(pdfRes.status).toBe(200);
+    expect(pdfRes.headers.get('content-type')).toBe('application/pdf');
   });
 });

@@ -16,6 +16,7 @@ export default function TemplatesPage() {
   const [backgroundUrl, setBackgroundUrl] = useState('');
   const [layoutJson, setLayoutJson] = useState(() => JSON.stringify(DEFAULT_CERTIFICATE_LAYOUT, null, 2));
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   async function load() {
     const res = await fetch('/api/templates');
@@ -43,6 +44,23 @@ export default function TemplatesPage() {
     load();
   }
 
+  async function handleUploadBackground(file: File) {
+    setError(null);
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const res = await fetch('/api/uploads/logos', { method: 'POST', body: form });
+      if (!res.ok) {
+        setError((await res.json()).error ?? 'Upload failed');
+        return;
+      }
+      setBackgroundUrl((await res.json()).url);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <div>
       <h1 className="mb-2 text-2xl font-bold">Certificate Templates</h1>
@@ -52,14 +70,20 @@ export default function TemplatesPage() {
       </p>
 
       <form onSubmit={handleCreate} className="mb-8 flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <input placeholder="Template name" value={name} onChange={(e) => setName(e.target.value)} required className="input flex-1" />
-          <input
-            placeholder="Background image URL (/uploads/logos/...)"
-            value={backgroundUrl}
-            onChange={(e) => setBackgroundUrl(e.target.value)}
-            className="input flex-1"
-          />
+          <label className="cursor-pointer rounded-md border border-gray-300 px-3 py-2 text-sm">
+            {uploading ? 'Uploading…' : backgroundUrl ? 'Background uploaded ✓' : 'Upload background image'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleUploadBackground(file);
+              }}
+            />
+          </label>
         </div>
         <textarea
           value={layoutJson}

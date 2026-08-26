@@ -14,12 +14,6 @@ dist/
 *.db
 *.db-journal
 
-# storage (generated at runtime; never delete certificate history via git)
-/storage/pdf/*
-/storage/qr/*
-!/storage/pdf/.gitkeep
-!/storage/qr/.gitkeep
-
 # runtime uploads (generated at runtime, not source)
 /public/uploads/signatures/*
 /public/uploads/logos/*

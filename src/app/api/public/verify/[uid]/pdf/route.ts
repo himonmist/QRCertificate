@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile } from 'node:fs/promises';
 import { prisma } from '@/lib/db';
 import { isValidCertificateUidFormat } from '@/lib/certificateId';
-import { privateFilePath } from '@/lib/storage';
+import { renderCertificateAssets } from '@/lib/certificateService';
 import { publicVerifyRateLimiter } from '@/lib/rateLimit';
 import { getClientIp } from '@/lib/http';
 
@@ -32,16 +31,16 @@ export async function GET(request: NextRequest, { params }: { params: { uid: str
     return NextResponse.json({ error: 'Certificate not found' }, { status: 404 });
   }
 
-  try {
-    const bytes = await readFile(privateFilePath('pdf', `${params.uid}.pdf`));
-    return new NextResponse(bytes, {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${params.uid}.pdf"`,
-        'Cache-Control': 'private, no-store',
-      },
-    });
-  } catch {
-    return NextResponse.json({ error: 'Certificate file not found' }, { status: 404 });
+  const assets = await renderCertificateAssets(params.uid);
+  if (!assets) {
+    return NextResponse.json({ error: 'Certificate not found' }, { status: 404 });
   }
+
+  return new NextResponse(new Uint8Array(assets.pdf), {
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${params.uid}.pdf"`,
+      'Cache-Control': 'private, no-store',
+    },
+  });
 }

@@ -3,13 +3,15 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// SQLite has no native enum support in Prisma, so role/status/category
-// fields below are plain Strings. The allowed values are enforced in the
-// application layer — see src/lib/constants.ts (ADMIN_ROLES, TRAINER_STATUSES,
+// Kept as plain Strings rather than native Postgres enums so the schema
+// stayed portable back when this ran on SQLite (which has no enum support)
+// and so changing the allowed values never needs a migration. Allowed
+// values are enforced in the application layer — see src/lib/constants.ts
+// (ADMIN_ROLES, TRAINER_STATUSES,
 // PROGRAM_CATEGORIES, PROGRAM_TRAINER_ROLES, CERTIFICATE_STATUSES) and the
 // corresponding zod schemas in src/lib/validation.ts.
 
@@ -124,6 +126,12 @@ model Certificate {
   qrImageUrl       String?
   pdfUrl           String?
   verificationHash String
+  // Frozen copy of the participant/program/trainer fields as they were at
+  // issuance (see src/lib/certificateSnapshot.ts) — the certificate PDF and
+  // public verify page always render from this, never from a live join, so
+  // an admin correcting a typo in a program's title later can't silently
+  // rewrite an already-issued "permanent" certificate.
+  renderedSnapshotJson String
   status           String    @default("active") // active | revoked | superseded
   revokedReason    String?
   revokedAt        DateTime?

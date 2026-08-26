@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isTrustedImageReference } from './imageUrl';
 
 export const trainerInputSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(200),
@@ -66,21 +67,18 @@ export const loginInputSchema = z.object({
   password: z.string().min(8).max(200),
 });
 
-// Must match the exact shape produced by saveUploadedImage() (src/lib/storage.ts):
-// /uploads/<category>/<uuid>.<ext>. This is deliberately not a general URL —
-// it is later joined onto a filesystem path (see resolvePublicPath in
-// certificateService.ts), so accepting arbitrary strings here would open a
-// path-traversal hole (e.g. "../../../../etc/something").
-const UPLOADED_IMAGE_PATH_PATTERN =
-  /^\/uploads\/(signatures|logos|participants)\/[a-zA-Z0-9-]+\.(png|jpe?g|webp)$/i;
-
 export const templateInputSchema = z.object({
   name: z.string().trim().min(1).max(200),
+  // Must be exactly what an image upload endpoint returned (see
+  // isTrustedImageReference): a local /uploads/... path, or an https URL on
+  // our trusted Vercel Blob host. Accepting arbitrary strings here would let
+  // an Admin (not just Super Admin) turn certificate rendering — which
+  // fetches this URL — into an SSRF/path-traversal primitive.
   backgroundUrl: z
     .string()
     .trim()
     .max(500)
-    .regex(UPLOADED_IMAGE_PATH_PATTERN, 'backgroundUrl must be a path returned by an image upload endpoint')
+    .refine(isTrustedImageReference, 'backgroundUrl must be a path returned by an image upload endpoint')
     .optional(),
   layoutJson: z.string().min(2),
 });
