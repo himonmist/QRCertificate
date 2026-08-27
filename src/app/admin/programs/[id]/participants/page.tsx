@@ -54,6 +54,7 @@ export default function ProgramParticipantsPage() {
   const [singleForm, setSingleForm] = useState({ fullName: '', designation: '', email: '' });
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [bulkPreview, setBulkPreview] = useState<{ wouldImport: number; wouldSkipDuplicates: number; errors: { row: number; message: string }[] } | null>(null);
+  const [bulkResult, setBulkResult] = useState<{ imported: number; skippedDuplicates: number; errors: { row: number; message: string }[] } | null>(null);
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
   const [trainerRole, setTrainerRole] = useState<'chief_trainer' | 'trainer'>('trainer');
   const [prefix, setPrefix] = useState('MNC');
@@ -110,10 +111,10 @@ export default function ProgramParticipantsPage() {
     const res = await fetch(`/api/programs/${programId}/participants/bulk`, { method: 'POST', body: form });
     if (res.ok) {
       const json = await res.json();
+      setBulkResult({ imported: json.imported, skippedDuplicates: json.skippedDuplicates, errors: json.errors });
       setNotice(`Imported ${json.imported}, skipped ${json.skippedDuplicates} duplicates, ${json.errors.length} errors.`);
       setBulkFile(null);
       setBulkPreview(null);
-      setShowBulkForm(false);
       loadAll();
     }
   }
@@ -233,7 +234,15 @@ export default function ProgramParticipantsPage() {
               <button className="btn btn-secondary" onClick={() => setShowAddForm((v) => !v)}>
                 {showAddForm ? 'Cancel' : '+ Add participant'}
               </button>
-              <button className="btn btn-secondary" onClick={() => setShowBulkForm((v) => !v)}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowBulkForm((v) => !v);
+                  setBulkFile(null);
+                  setBulkPreview(null);
+                  setBulkResult(null);
+                }}
+              >
                 {showBulkForm ? 'Cancel' : 'Bulk upload'}
               </button>
             </div>
@@ -282,15 +291,31 @@ export default function ProgramParticipantsPage() {
 
           {showBulkForm && (
             <div className="card elev-sm mb-4">
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                Columns: Full Name, Designation, Organization, Email, Phone
+              <p style={{ fontSize: 13, marginBottom: 4 }}>
+                Columns (first row, exact spelling): <strong>Full Name, Designation, Organization, Email, Phone</strong>
               </p>
+              <ul className="text-muted" style={{ fontSize: 12, marginTop: 0, paddingLeft: 18 }}>
+                <li>Full Name is required; everything else is optional.</li>
+                <li>
+                  Leave Email blank if a participant doesn&rsquo;t have one &mdash; don&rsquo;t reuse the same email
+                  for multiple people, since each email must be unique within a program.
+                </li>
+              </ul>
+              <div className="flex gap-2 mb-3">
+                <a href="/samples/participants-sample.csv" download className="btn btn-ghost">
+                  Download sample CSV
+                </a>
+                <a href="/samples/participants-sample.xlsx" download className="btn btn-ghost">
+                  Download sample Excel
+                </a>
+              </div>
               <input
                 type="file"
                 accept=".csv,.xlsx,.xls"
                 onChange={(e) => {
                   setBulkFile(e.target.files?.[0] ?? null);
                   setBulkPreview(null);
+                  setBulkResult(null);
                 }}
               />
               <div className="flex gap-2">
@@ -302,10 +327,22 @@ export default function ProgramParticipantsPage() {
                 </button>
               </div>
               {bulkPreview && (
-                <p className="text-muted" style={{ fontSize: 13 }}>
-                  Would import {bulkPreview.wouldImport}, skip {bulkPreview.wouldSkipDuplicates} duplicates,{' '}
-                  {bulkPreview.errors.length} row error(s).
-                </p>
+                <div style={{ fontSize: 13 }}>
+                  <p className="text-muted">
+                    Would import {bulkPreview.wouldImport}, skip {bulkPreview.wouldSkipDuplicates} duplicates,{' '}
+                    {bulkPreview.errors.length} row error(s).
+                  </p>
+                  <BulkRowErrors errors={bulkPreview.errors} />
+                </div>
+              )}
+              {bulkResult && (
+                <div style={{ fontSize: 13 }}>
+                  <p className="text-muted">
+                    Imported {bulkResult.imported}, skipped {bulkResult.skippedDuplicates} duplicates,{' '}
+                    {bulkResult.errors.length} row error(s).
+                  </p>
+                  <BulkRowErrors errors={bulkResult.errors} />
+                </div>
               )}
             </div>
           )}
@@ -445,5 +482,26 @@ export default function ProgramParticipantsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function BulkRowErrors({ errors }: { errors: { row: number; message: string }[] }) {
+  if (errors.length === 0) return null;
+  return (
+    <ul
+      style={{
+        margin: '4px 0 0',
+        paddingLeft: 18,
+        maxHeight: 160,
+        overflowY: 'auto',
+        color: 'var(--color-accent-700)',
+      }}
+    >
+      {errors.map((e, i) => (
+        <li key={i}>
+          Row {e.row}: {e.message}
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -31,3 +31,6 @@ npm-debug.log*
 
 # coverage
 /coverage
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
