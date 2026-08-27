@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 interface Certificate {
   id: string;
@@ -8,7 +8,12 @@ interface Certificate {
   status: 'active' | 'revoked' | 'superseded';
   issuedAt: string;
   participant: { fullName: string };
-  program: { title: string };
+  program: { id: string; title: string };
+}
+
+interface Program {
+  id: string;
+  title: string;
 }
 
 const STATUS_TAG: Record<Certificate['status'], string> = {
@@ -31,10 +36,26 @@ function toCsv(certificates: Certificate[]): string {
     .join('\n');
 }
 
+/** Groups certificates by program, preserving the API's most-recent-first order both across and within groups. */
+function groupByProgram(certificates: Certificate[]): { program: Certificate['program']; certificates: Certificate[] }[] {
+  const order: string[] = [];
+  const groups = new Map<string, { program: Certificate['program']; certificates: Certificate[] }>();
+  for (const cert of certificates) {
+    if (!groups.has(cert.program.id)) {
+      groups.set(cert.program.id, { program: cert.program, certificates: [] });
+      order.push(cert.program.id);
+    }
+    groups.get(cert.program.id)!.certificates.push(cert);
+  }
+  return order.map((id) => groups.get(id)!);
+}
+
 export default function CertificatesPage() {
   const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [programs, setPrograms] = useState<Program[]>([]);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [programId, setProgramId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
@@ -43,14 +64,20 @@ export default function CertificatesPage() {
     const query = new URLSearchParams();
     if (q) query.set('q', q);
     if (status) query.set('status', status);
+    if (programId) query.set('program_id', programId);
     const res = await fetch(`/api/certificates?${query.toString()}`);
     if (res.ok) setCertificates((await res.json()).certificates);
   }
 
   useEffect(() => {
     load();
+    fetch('/api/programs')
+      .then((res) => (res.ok ? res.json() : { programs: [] }))
+      .then((body) => setPrograms(body.programs ?? []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const groups = useMemo(() => groupByProgram(certificates), [certificates]);
 
   async function handleRevoke() {
     if (!revokeTarget) return;
@@ -102,6 +129,14 @@ export default function CertificatesPage() {
           className="input"
           style={{ maxWidth: 320 }}
         />
+        <select value={programId} onChange={(e) => setProgramId(e.target.value)} className="input" style={{ maxWidth: 220 }}>
+          <option value="">All programs</option>
+          {programs.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.title}
+            </option>
+          ))}
+        </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="input" style={{ maxWidth: 180 }}>
           <option value="">All statuses</option>
           <option value="active">Active</option>
@@ -117,63 +152,66 @@ export default function CertificatesPage() {
       </div>
       {error && <p className="mb-4" style={{ color: 'var(--color-accent-700)', fontSize: 13 }}>{error}</p>}
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Certificate ID</th>
-            <th>Participant</th>
-            <th>Program</th>
-            <th>Status</th>
-            <th>Issued</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {certificates.map((cert) => (
-            <tr key={cert.id}>
-              <td style={{ fontFamily: 'var(--font-heading)', fontSize: 12 }}>{cert.certificateUid}</td>
-              <td>{cert.participant.fullName}</td>
-              <td>{cert.program.title}</td>
-              <td>
-                <span className={`tag ${STATUS_TAG[cert.status]}`}>{cert.status}</span>
-              </td>
-              <td>{cert.issuedAt.slice(0, 10)}</td>
-              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                <a href={`/api/certificates/${cert.certificateUid}/pdf`} target="_blank" rel="noreferrer" className="btn btn-ghost">
-                  PDF
-                </a>
-                <a href={`/verify/${cert.certificateUid}`} target="_blank" rel="noreferrer" className="btn btn-ghost">
-                  Verify page
-                </a>
-                {cert.status === 'active' && (
-                  <button
-                    onClick={() => {
-                      setRevokeTarget(cert.certificateUid);
-                      setRevokeReason('');
-                    }}
-                    className="btn btn-ghost"
-                    style={{ color: 'var(--color-accent-700)' }}
-                  >
-                    Revoke
-                  </button>
-                )}
-                {cert.status !== 'superseded' && (
-                  <button onClick={() => handleReissue(cert.certificateUid)} className="btn btn-ghost">
-                    Reissue
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-          {certificates.length === 0 && (
-            <tr>
-              <td colSpan={6} className="text-muted">
-                No certificates found.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      {groups.length === 0 && <p className="text-muted">No certificates found.</p>}
+
+      <div className="flex flex-col gap-6">
+        {groups.map((group) => (
+          <div key={group.program.id}>
+            <div className="mb-2 flex items-center gap-2">
+              <h5 style={{ margin: 0 }}>{group.program.title}</h5>
+              <span className="tag tag-neutral">{group.certificates.length}</span>
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Certificate ID</th>
+                  <th>Participant</th>
+                  <th>Status</th>
+                  <th>Issued</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {group.certificates.map((cert) => (
+                  <tr key={cert.id}>
+                    <td style={{ fontFamily: 'var(--font-heading)', fontSize: 12 }}>{cert.certificateUid}</td>
+                    <td>{cert.participant.fullName}</td>
+                    <td>
+                      <span className={`tag ${STATUS_TAG[cert.status]}`}>{cert.status}</span>
+                    </td>
+                    <td>{cert.issuedAt.slice(0, 10)}</td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <a href={`/api/certificates/${cert.certificateUid}/pdf`} target="_blank" rel="noreferrer" className="btn btn-ghost">
+                        PDF
+                      </a>
+                      <a href={`/verify/${cert.certificateUid}`} target="_blank" rel="noreferrer" className="btn btn-ghost">
+                        Verify page
+                      </a>
+                      {cert.status === 'active' && (
+                        <button
+                          onClick={() => {
+                            setRevokeTarget(cert.certificateUid);
+                            setRevokeReason('');
+                          }}
+                          className="btn btn-ghost"
+                          style={{ color: 'var(--color-accent-700)' }}
+                        >
+                          Revoke
+                        </button>
+                      )}
+                      {cert.status !== 'superseded' && (
+                        <button onClick={() => handleReissue(cert.certificateUid)} className="btn btn-ghost">
+                          Reissue
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
 
       {revokeTarget && (
         <div className="dialog-backdrop" onClick={() => setRevokeTarget(null)}>
