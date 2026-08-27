@@ -20,6 +20,13 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   const trainer = await prisma.trainer.findUnique({ where: { id: params.id } });
   if (!trainer) return notFound('Trainer not found');
 
+  if (parsed.data.email && parsed.data.email !== trainer.email) {
+    const conflict = await prisma.trainer.findUnique({ where: { email: parsed.data.email } });
+    if (conflict) {
+      return NextResponse.json({ error: 'A trainer with this email already exists' }, { status: 409 });
+    }
+  }
+
   const updated = await prisma.trainer.update({ where: { id: params.id }, data: parsed.data });
   await logAudit({
     adminId: admin.adminId,

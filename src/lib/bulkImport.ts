@@ -27,10 +27,17 @@ export async function parseRowsFromFile(file: File): Promise<Record<string, stri
   const buffer = Buffer.from(await file.arrayBuffer());
 
   if (name.endsWith('.csv')) {
-    const text = buffer.toString('utf-8');
+    // Excel and Google Sheets both commonly save "CSV UTF-8" with a leading
+    // byte-order-mark (EF BB BF), which decodes to a literal U+FEFF
+    // character. Left in place, it silently attaches itself to the first
+    // header cell ("﻿Full Name" instead of "Full Name"), so the
+    // required-column check below never finds "Full Name" and every row
+    // in the file fails validation — not just the first one.
+    const text = buffer.toString('utf-8').replace(/^﻿/, '');
     const result = Papa.parse<Record<string, string>>(text, {
       header: true,
       skipEmptyLines: true,
+      transformHeader: (header) => header.trim(),
     });
     return result.data;
   }

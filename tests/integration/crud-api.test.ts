@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET as listTrainers, POST as createTrainer } from '@/app/api/trainers/route';
+import { PUT as updateTrainer } from '@/app/api/trainers/[id]/route';
 import { POST as createProgram } from '@/app/api/programs/route';
 import { POST as assignTrainer } from '@/app/api/programs/[id]/trainers/route';
 import {
@@ -52,6 +53,32 @@ describe('Trainers API', () => {
 
     const dup = await createTrainer(jsonRequest('http://localhost:3000/api/trainers', 'POST', body));
     expect(dup.status).toBe(409);
+  });
+
+  it('edits a trainer’s profile fields, and rejects changing the email to one already in use', async () => {
+    const emailA = `edit-a-${Date.now()}@example.com`;
+    const emailB = `edit-b-${Date.now()}@example.com`;
+    const createdA = await createTrainer(jsonRequest('http://localhost:3000/api/trainers', 'POST', { name: 'Original Name', email: emailA }));
+    const { trainer: trainerA } = await createdA.json();
+    await createTrainer(jsonRequest('http://localhost:3000/api/trainers', 'POST', { name: 'Trainer B', email: emailB }));
+
+    const edited = await updateTrainer(
+      jsonRequest(`http://localhost:3000/api/trainers/${trainerA.id}`, 'PUT', {
+        name: 'Updated Name',
+        designation: 'Senior Trainer',
+        organization: 'Updated Org',
+      }),
+      { params: { id: trainerA.id } }
+    );
+    expect(edited.status).toBe(200);
+    const { trainer: updated } = await edited.json();
+    expect(updated).toMatchObject({ name: 'Updated Name', designation: 'Senior Trainer', organization: 'Updated Org', email: emailA });
+
+    const conflict = await updateTrainer(
+      jsonRequest(`http://localhost:3000/api/trainers/${trainerA.id}`, 'PUT', { email: emailB }),
+      { params: { id: trainerA.id } }
+    );
+    expect(conflict.status).toBe(409);
   });
 });
 

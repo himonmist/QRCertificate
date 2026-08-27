@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateRows } from '@/lib/bulkImport';
+import { validateRows, parseRowsFromFile } from '@/lib/bulkImport';
 
 describe('validateRows', () => {
   it('accepts well-formed rows using the required template columns', () => {
@@ -44,5 +44,39 @@ describe('validateRows', () => {
     expect(report.totalRows).toBe(0);
     expect(report.validRows).toHaveLength(0);
     expect(report.errors).toHaveLength(0);
+  });
+});
+
+describe('parseRowsFromFile', () => {
+  it('strips a leading UTF-8 byte-order-mark so the header matches "Full Name" exactly', async () => {
+    // Reproduces a real upload: Excel/Google Sheets "CSV UTF-8" exports
+    // commonly prefix the file with EF BB BF, which decodes to a literal
+    // U+FEFF character. Left on the first header, every row in the file
+    // fails validation because no column is ever named exactly "Full Name".
+    const bom = '﻿';
+    const csv = `${bom}Full Name,Designation,Organization,Email,Phone\nJohn Smith,Dr.,Acme,john@acme.com,555-1234\n`;
+    const file = new File([csv], 'participants.csv', { type: 'text/csv' });
+
+    const rows = await parseRowsFromFile(file);
+    expect(Object.keys(rows[0]!)).toContain('Full Name');
+    expect(Object.keys(rows[0]!)).not.toContain(`${bom}Full Name`);
+
+    const report = validateRows(rows);
+    expect(report.errors).toHaveLength(0);
+    expect(report.validRows).toEqual([
+      { fullName: 'John Smith', designation: 'Dr.', organization: 'Acme', email: 'john@acme.com', phone: '555-1234' },
+    ]);
+  });
+
+  it('trims stray whitespace around header names', async () => {
+    const csv = ' Full Name ,Designation,Organization,Email,Phone\nJane Roe,,,,\n';
+    const file = new File([csv], 'participants.csv', { type: 'text/csv' });
+
+    const rows = await parseRowsFromFile(file);
+    expect(Object.keys(rows[0]!)).toContain('Full Name');
+
+    const report = validateRows(rows);
+    expect(report.errors).toHaveLength(0);
+    expect(report.validRows[0]?.fullName).toBe('Jane Roe');
   });
 });

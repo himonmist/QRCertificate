@@ -12,6 +12,22 @@ interface Trainer {
   signatureUrl: string | null;
 }
 
+interface EditForm {
+  name: string;
+  email: string;
+  designation: string;
+  organization: string;
+}
+
+function toEditForm(trainer: Trainer): EditForm {
+  return {
+    name: trainer.name,
+    email: trainer.email,
+    designation: trainer.designation ?? '',
+    organization: trainer.organization ?? '',
+  };
+}
+
 export default function TrainersPage() {
   const [trainers, setTrainers] = useState<Trainer[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -22,6 +38,10 @@ export default function TrainersPage() {
   const [error, setError] = useState<string | null>(null);
   const [signatureUploading, setSignatureUploading] = useState<string | null>(null);
   const [signatureErrors, setSignatureErrors] = useState<Record<string, string>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({ name: '', email: '', designation: '', organization: '' });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   async function loadTrainers() {
     const res = await fetch('/api/trainers');
@@ -59,6 +79,42 @@ export default function TrainersPage() {
     resetForm();
     setShowForm(false);
     loadTrainers();
+  }
+
+  function startEdit(trainer: Trainer) {
+    setEditingId(trainer.id);
+    setEditForm(toEditForm(trainer));
+    setEditError(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError(null);
+  }
+
+  async function saveEdit(trainerId: string) {
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/api/trainers/${trainerId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: editForm.name,
+          email: editForm.email,
+          designation: editForm.designation || undefined,
+          organization: editForm.organization || undefined,
+        }),
+      });
+      if (!res.ok) {
+        setEditError((await res.json()).error ?? 'Failed to save changes');
+        return;
+      }
+      setEditingId(null);
+      await loadTrainers();
+    } finally {
+      setSavingEdit(false);
+    }
   }
 
   async function toggleStatus(trainer: Trainer) {
@@ -146,50 +202,99 @@ export default function TrainersPage() {
           </tr>
         </thead>
         <tbody>
-          {trainers.map((trainer) => (
-            <tr key={trainer.id}>
-              <td style={{ fontWeight: 600 }}>{trainer.name}</td>
-              <td>{trainer.designation ?? '—'}</td>
-              <td>{trainer.organization ?? '—'}</td>
-              <td>
-                <span className={`tag ${trainer.status === 'active' ? 'tag-accent' : 'tag-neutral'}`}>
-                  {trainer.status}
-                </span>
-              </td>
-              <td>
-                <div className="flex items-center gap-2">
-                  {trainer.signatureUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={trainer.signatureUrl} alt={`${trainer.name}'s signature`} style={{ height: 28 }} />
+          {trainers.map((trainer) =>
+            editingId === trainer.id ? (
+              <tr key={trainer.id}>
+                <td>
+                  <input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    className="input"
+                    style={{ minWidth: 140 }}
+                  />
+                </td>
+                <td>
+                  <input
+                    value={editForm.designation}
+                    onChange={(e) => setEditForm({ ...editForm, designation: e.target.value })}
+                    className="input"
+                  />
+                </td>
+                <td>
+                  <input
+                    value={editForm.organization}
+                    onChange={(e) => setEditForm({ ...editForm, organization: e.target.value })}
+                    className="input"
+                  />
+                </td>
+                <td colSpan={2}>
+                  <input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    className="input"
+                  />
+                  {editError && (
+                    <p style={{ color: 'var(--color-accent-700)', fontSize: 11, margin: '4px 0 0' }}>{editError}</p>
                   )}
-                  <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
-                    {signatureUploading === trainer.id ? 'Uploading…' : trainer.signatureUrl ? 'Replace' : 'Upload'}
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      className="hidden"
-                      disabled={signatureUploading === trainer.id}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) uploadSignature(trainer.id, file);
-                        e.target.value = '';
-                      }}
-                    />
-                  </label>
-                </div>
-                {signatureErrors[trainer.id] && (
-                  <p style={{ color: 'var(--color-accent-700)', fontSize: 11, margin: '2px 0 0' }}>
-                    {signatureErrors[trainer.id]}
-                  </p>
-                )}
-              </td>
-              <td>
-                <button onClick={() => toggleStatus(trainer)} className="btn btn-ghost">
-                  {trainer.status === 'active' ? 'Deactivate' : 'Activate'}
-                </button>
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button onClick={cancelEdit} className="btn btn-ghost" disabled={savingEdit}>
+                    Cancel
+                  </button>
+                  <button onClick={() => saveEdit(trainer.id)} className="btn btn-primary" disabled={savingEdit}>
+                    {savingEdit ? 'Saving…' : 'Save'}
+                  </button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={trainer.id}>
+                <td style={{ fontWeight: 600 }}>{trainer.name}</td>
+                <td>{trainer.designation ?? '—'}</td>
+                <td>{trainer.organization ?? '—'}</td>
+                <td>
+                  <span className={`tag ${trainer.status === 'active' ? 'tag-accent' : 'tag-neutral'}`}>
+                    {trainer.status}
+                  </span>
+                </td>
+                <td>
+                  <div className="flex items-center gap-2">
+                    {trainer.signatureUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={trainer.signatureUrl} alt={`${trainer.name}'s signature`} style={{ height: 28 }} />
+                    )}
+                    <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
+                      {signatureUploading === trainer.id ? 'Uploading…' : trainer.signatureUrl ? 'Replace' : 'Upload'}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        disabled={signatureUploading === trainer.id}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) uploadSignature(trainer.id, file);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {signatureErrors[trainer.id] && (
+                    <p style={{ color: 'var(--color-accent-700)', fontSize: 11, margin: '2px 0 0' }}>
+                      {signatureErrors[trainer.id]}
+                    </p>
+                  )}
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button onClick={() => startEdit(trainer)} className="btn btn-ghost">
+                    Edit
+                  </button>
+                  <button onClick={() => toggleStatus(trainer)} className="btn btn-ghost">
+                    {trainer.status === 'active' ? 'Deactivate' : 'Activate'}
+                  </button>
+                </td>
+              </tr>
+            )
+          )}
           {trainers.length === 0 && (
             <tr>
               <td colSpan={6} className="text-muted">
