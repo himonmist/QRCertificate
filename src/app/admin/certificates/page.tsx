@@ -22,6 +22,11 @@ const STATUS_TAG: Record<Certificate['status'], string> = {
   superseded: 'tag-neutral',
 };
 
+/** Strips characters that are illegal in filenames on Windows/macOS/Linux. */
+function sanitizeFilenamePart(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/g, '').trim();
+}
+
 function toCsv(certificates: Certificate[]): string {
   const header = ['Certificate ID', 'Participant', 'Program', 'Status', 'Issued'];
   const rows = certificates.map((c) => [
@@ -59,23 +64,32 @@ export default function CertificatesPage() {
   const [error, setError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
+  const [pdfExportProgress, setPdfExportProgress] = useState<{ done: number; total: number } | null>(null);
 
   async function load() {
+    if (!programId) {
+      setCertificates([]);
+      return;
+    }
     const query = new URLSearchParams();
     if (q) query.set('q', q);
     if (status) query.set('status', status);
-    if (programId) query.set('program_id', programId);
+    query.set('program_id', programId);
     const res = await fetch(`/api/certificates?${query.toString()}`);
     if (res.ok) setCertificates((await res.json()).certificates);
   }
 
   useEffect(() => {
-    load();
     fetch('/api/programs')
       .then((res) => (res.ok ? res.json() : { programs: [] }))
       .then((body) => setPrograms(body.programs ?? []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [programId]);
 
   const groups = useMemo(() => groupByProgram(certificates), [certificates]);
 
@@ -117,6 +131,40 @@ export default function CertificatesPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function handleExportAllPdf() {
+    if (certificates.length === 0 || pdfExportProgress) return;
+    setError(null);
+    setPdfExportProgress({ done: 0, total: certificates.length });
+    const failed: string[] = [];
+
+    for (let i = 0; i < certificates.length; i++) {
+      const cert = certificates[i]!;
+      try {
+        const res = await fetch(`/api/certificates/${cert.certificateUid}/pdf`);
+        if (!res.ok) throw new Error('download failed');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${cert.certificateUid}-${sanitizeFilenamePart(cert.participant.fullName)}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } catch {
+        failed.push(cert.certificateUid);
+      }
+      setPdfExportProgress({ done: i + 1, total: certificates.length });
+      // Small pause between downloads so the browser doesn't treat the burst as spam.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    setPdfExportProgress(null);
+    if (failed.length > 0) {
+      setError(`Failed to download ${failed.length} certificate PDF(s): ${failed.join(', ')}`);
+    }
+  }
+
   return (
     <div>
       <h1 className="mb-6">Certificates</h1>
@@ -130,7 +178,7 @@ export default function CertificatesPage() {
           style={{ maxWidth: 320 }}
         />
         <select value={programId} onChange={(e) => setProgramId(e.target.value)} className="input" style={{ maxWidth: 220 }}>
-          <option value="">All programs</option>
+          <option value="">Select a training program…</option>
           {programs.map((p) => (
             <option key={p.id} value={p.id}>
               {p.title}
@@ -143,16 +191,27 @@ export default function CertificatesPage() {
           <option value="revoked">Revoked</option>
           <option value="superseded">Superseded</option>
         </select>
-        <button onClick={load} className="btn btn-secondary">
+        <button onClick={load} disabled={!programId} className="btn btn-secondary">
           Search
         </button>
-        <button onClick={handleExport} className="btn btn-ghost" style={{ marginLeft: 'auto' }}>
+        <button
+          onClick={handleExportAllPdf}
+          disabled={!programId || certificates.length === 0 || pdfExportProgress !== null}
+          className="btn btn-ghost"
+          style={{ marginLeft: 'auto' }}
+        >
+          {pdfExportProgress ? `Exporting… ${pdfExportProgress.done}/${pdfExportProgress.total}` : 'Export PDF All'}
+        </button>
+        <button onClick={handleExport} disabled={!programId || certificates.length === 0} className="btn btn-ghost">
           Export CSV
         </button>
       </div>
       {error && <p className="mb-4" style={{ color: 'var(--color-accent-700)', fontSize: 13 }}>{error}</p>}
 
-      {groups.length === 0 && <p className="text-muted">No certificates found.</p>}
+      {!programId && (
+        <p className="text-muted">Select a training program above to view its certificates.</p>
+      )}
+      {programId && groups.length === 0 && <p className="text-muted">No certificates found.</p>}
 
       <div className="flex flex-col gap-6">
         {groups.map((group) => (
