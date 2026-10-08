@@ -215,6 +215,35 @@ export async function reissueCertificate(oldCertificateUid: string): Promise<Cer
   return newCertificate;
 }
 
+/**
+ * Permanently deletes a certificate record (not a revoke — the row and its
+ * scan history are gone, and nothing can verify it again). Used for
+ * cleaning up accidental duplicates/test data, not for taking a real
+ * certificate out of circulation; use revoke for that instead.
+ *
+ * If this certificate is itself the result of a reissue (another
+ * certificate's supersededById points to it), that older certificate is
+ * restored to active and un-linked, since the replacement it was pointing
+ * to no longer exists.
+ */
+export async function deleteCertificate(certificateUid: string): Promise<Certificate> {
+  const certificate = await prisma.certificate.findUnique({ where: { certificateUid } });
+  if (!certificate) {
+    throw new Error('Certificate not found');
+  }
+
+  await prisma.$transaction([
+    prisma.verificationLog.deleteMany({ where: { certificateId: certificate.id } }),
+    prisma.certificate.updateMany({
+      where: { supersededById: certificate.id },
+      data: { status: 'active', supersededById: null },
+    }),
+    prisma.certificate.delete({ where: { id: certificate.id } }),
+  ]);
+
+  return certificate;
+}
+
 export interface RenderedCertificateAssets {
   pdf: Buffer;
   qr: Buffer;

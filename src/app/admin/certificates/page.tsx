@@ -64,6 +64,8 @@ export default function CertificatesPage() {
   const [error, setError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [pdfExportProgress, setPdfExportProgress] = useState<{ done: number; total: number } | null>(null);
 
   async function load() {
@@ -118,6 +120,23 @@ export default function CertificatesPage() {
       return;
     }
     load();
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setError(null);
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/certificates/${deleteTarget}`, { method: 'DELETE' });
+      if (!res.ok) {
+        setError((await res.json()).error);
+        return;
+      }
+      setDeleteTarget(null);
+      load();
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function handleExport() {
@@ -263,6 +282,13 @@ export default function CertificatesPage() {
                           Reissue
                         </button>
                       )}
+                      <button
+                        onClick={() => setDeleteTarget(cert.certificateUid)}
+                        className="btn btn-ghost"
+                        style={{ color: 'var(--color-accent-700)' }}
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -296,6 +322,28 @@ export default function CertificatesPage() {
               </button>
               <button className="btn btn-primary" onClick={handleRevoke}>
                 Confirm revoke
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="dialog-backdrop" onClick={() => setDeleteTarget(null)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-title">Delete certificate</div>
+            <p className="dialog-body">
+              This permanently deletes certificate <strong>{deleteTarget}</strong> and its scan
+              history. Unlike revoke, this cannot be undone and its verify page will simply show
+              &ldquo;not found&rdquo; afterward. The participant becomes un-certified again, so a
+              new certificate can be generated for them if needed.
+            </p>
+            <div className="dialog-actions">
+              <button className="btn btn-secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Permanently delete'}
               </button>
             </div>
           </div>
