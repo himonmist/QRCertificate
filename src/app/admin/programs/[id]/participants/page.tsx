@@ -28,13 +28,39 @@ interface Template {
 interface ProgramDetail {
   id: string;
   title: string;
+  category: string;
   organizedBy: string;
+  issuedBy: string;
   startDate: string;
   endDate: string;
   location: string | null;
   templateId: string | null;
   logoUrl: string | null;
   trainers: { role: string; trainer: Trainer }[];
+}
+
+const CATEGORIES = ['workshop', 'course', 'seminar', 'certification'];
+
+interface ProgramForm {
+  title: string;
+  category: string;
+  organizedBy: string;
+  issuedBy: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+}
+
+function toProgramForm(program: ProgramDetail): ProgramForm {
+  return {
+    title: program.title,
+    category: program.category,
+    organizedBy: program.organizedBy,
+    issuedBy: program.issuedBy,
+    startDate: program.startDate.slice(0, 10),
+    endDate: program.endDate.slice(0, 10),
+    location: program.location ?? '',
+  };
 }
 
 export default function ProgramParticipantsPage() {
@@ -60,6 +86,10 @@ export default function ProgramParticipantsPage() {
   const [prefix, setPrefix] = useState('MNC');
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
+  const [editingProgram, setEditingProgram] = useState(false);
+  const [programForm, setProgramForm] = useState<ProgramForm | null>(null);
+  const [programError, setProgramError] = useState<string | null>(null);
+  const [savingProgram, setSavingProgram] = useState(false);
 
   async function loadAll() {
     const [programRes, participantsRes, trainersRes, templatesRes] = await Promise.all([
@@ -143,6 +173,36 @@ export default function ProgramParticipantsPage() {
     loadAll();
   }
 
+  function startEditProgram() {
+    if (!program) return;
+    setProgramForm(toProgramForm(program));
+    setProgramError(null);
+    setEditingProgram(true);
+  }
+
+  async function handleSaveProgram(event: FormEvent) {
+    event.preventDefault();
+    if (!programForm) return;
+    setProgramError(null);
+    setSavingProgram(true);
+    try {
+      const res = await fetch(`/api/programs/${programId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(programForm),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setProgramError(body.error ?? JSON.stringify(body.details ?? 'Failed to save changes'));
+        return;
+      }
+      setEditingProgram(false);
+      await loadAll();
+    } finally {
+      setSavingProgram(false);
+    }
+  }
+
   async function handleLogoUpload(file: File) {
     setLogoError(null);
     setLogoUploading(true);
@@ -217,11 +277,104 @@ export default function ProgramParticipantsPage() {
       <Link href="/admin/programs" className="btn btn-ghost" style={{ paddingInline: 0, marginBottom: 'var(--space-2)' }}>
         ← All programs
       </Link>
-      <h1 style={{ marginBottom: 2 }}>{program.title}</h1>
-      <p className="text-muted mb-6" style={{ fontSize: 13 }}>
-        Organized by {program.organizedBy} · {program.startDate.slice(0, 10)} → {program.endDate.slice(0, 10)}
-        {program.location ? ` · ${program.location}` : ''}
-      </p>
+
+      {editingProgram && programForm ? (
+        <form onSubmit={handleSaveProgram} className="card elev-sm mb-6">
+          <div className="field">
+            <label>Program title</label>
+            <input
+              value={programForm.title}
+              onChange={(e) => setProgramForm({ ...programForm, title: e.target.value })}
+              required
+              className="input"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="field">
+              <label>Category</label>
+              <select
+                value={programForm.category}
+                onChange={(e) => setProgramForm({ ...programForm, category: e.target.value })}
+                className="input"
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Organized by</label>
+              <input
+                value={programForm.organizedBy}
+                onChange={(e) => setProgramForm({ ...programForm, organizedBy: e.target.value })}
+                required
+                className="input"
+              />
+            </div>
+            <div className="field">
+              <label>Issued by</label>
+              <input
+                value={programForm.issuedBy}
+                onChange={(e) => setProgramForm({ ...programForm, issuedBy: e.target.value })}
+                required
+                className="input"
+              />
+            </div>
+            <div className="field">
+              <label>Start date</label>
+              <input
+                type="date"
+                value={programForm.startDate}
+                onChange={(e) => setProgramForm({ ...programForm, startDate: e.target.value })}
+                required
+                className="input"
+              />
+            </div>
+            <div className="field">
+              <label>End date</label>
+              <input
+                type="date"
+                value={programForm.endDate}
+                onChange={(e) => setProgramForm({ ...programForm, endDate: e.target.value })}
+                required
+                className="input"
+              />
+            </div>
+            <div className="field">
+              <label>Location</label>
+              <input
+                value={programForm.location}
+                onChange={(e) => setProgramForm({ ...programForm, location: e.target.value })}
+                className="input"
+              />
+            </div>
+          </div>
+          {programError && <p style={{ color: 'var(--color-accent-700)', fontSize: 13 }}>{programError}</p>}
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary" onClick={() => setEditingProgram(false)} disabled={savingProgram}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={savingProgram}>
+              {savingProgram ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 style={{ marginBottom: 2 }}>{program.title}</h1>
+            <p className="text-muted" style={{ fontSize: 13 }}>
+              Organized by {program.organizedBy} · {program.startDate.slice(0, 10)} → {program.endDate.slice(0, 10)}
+              {program.location ? ` · ${program.location}` : ''}
+            </p>
+          </div>
+          <button className="btn btn-secondary" onClick={startEditProgram} style={{ flexShrink: 0 }}>
+            Edit
+          </button>
+        </div>
+      )}
 
       {error && <p className="mb-4" style={{ color: 'var(--color-accent-700)', fontSize: 13 }}>{error}</p>}
       {notice && <p className="mb-4" style={{ color: 'var(--color-accent-800)', fontSize: 13 }}>{notice}</p>}
