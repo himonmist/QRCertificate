@@ -1,14 +1,66 @@
 import { describe, expect, it } from 'vitest';
-import { PDFDocument, PDFName, PDFDict, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFDict, PDFArray, StandardFonts } from 'pdf-lib';
 import { renderCertificatePdf, wrapTextToLines, fitFontSizeToWidth, resolveFooterLayout } from '@/lib/pdf';
 import { DEFAULT_CERTIFICATE_LAYOUT } from '@/lib/certificateLayout';
 import { generateQrPngBuffer } from '@/lib/qr';
+import zlib from 'node:zlib';
 
 async function countImageXObjects(pdfBytes: Buffer): Promise<number> {
   const doc = await PDFDocument.load(pdfBytes);
   const resources = doc.getPage(0).node.Resources();
   const xobjects = resources?.lookup(PDFName.of('XObject'), PDFDict);
   return xobjects ? xobjects.keys().length : 0;
+}
+
+/** Returns the {x, y} translation each embedded image was drawn at, in page order, by reading the raw content-stream "<tx> <ty> cm ... /ImageN Do" sequences. */
+async function getImageDrawPositions(pdfBytes: Buffer): Promise<{ x: number; y: number }[]> {
+  const doc = await PDFDocument.load(pdfBytes);
+  const page = doc.getPage(0);
+  const contentsRef = page.node.get(PDFName.of('Contents'));
+  const contents = doc.context.lookup(contentsRef);
+  const streams =
+    contents instanceof PDFArray
+      ? Array.from(
+          { length: contents.size() },
+          (_, i) => doc.context.lookup(contents.get(i)) as unknown as { getContents(): Uint8Array }
+        )
+      : [contents as unknown as { getContents(): Uint8Array }];
+
+  let text = '';
+  for (const s of streams) {
+    const raw = Buffer.from(s.getContents());
+    let decoded: Buffer;
+    try {
+      decoded = zlib.inflateSync(raw);
+    } catch {
+      decoded = raw;
+    }
+    text += decoded.toString('latin1') + '\n';
+  }
+
+  const lines = text
+    .split(/\n|\r/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const positions: { x: number; y: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.endsWith(' Do')) {
+      // pdf-lib wraps each drawImage in an outermost translate-only "cm",
+      // then an identity, then a scale-only "cm", then another identity,
+      // immediately before the "Do" — scan forward through that preceding
+      // block and take the FIRST (outermost) translate-only match, which is
+      // the image's actual drawn position (later ones in the block are
+      // either an identity or the width/height scale, not a translation).
+      for (let j = Math.max(0, i - 6); j < i; j++) {
+        const match = lines[j]!.match(/^1 0 0 1 ([\d.]+) ([\d.]+) cm$/);
+        if (match && !(match[1] === '0' && match[2] === '0')) {
+          positions.push({ x: parseFloat(match[1]!), y: parseFloat(match[2]!) });
+          break;
+        }
+      }
+    }
+  }
+  return positions;
 }
 
 describe('renderCertificatePdf', () => {
@@ -168,7 +220,7 @@ describe('renderCertificatePdf', () => {
     expect((await PDFDocument.load(pdfBytes)).getPageCount()).toBe(1);
   });
 
-  it('draws the top-left organizer logo independently of the bottom-right supported-by logo', async () => {
+  it('draws the bottom-left organizer logo independently of the bottom-right supported-by logo', async () => {
     const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
     // Two distinct PNGs standing in for two different uploaded logos.
     const organizerLogo = await generateQrPngBuffer('https://verify.example.com/verify/ORGANIZER-LOGO');
@@ -204,6 +256,41 @@ describe('renderCertificatePdf', () => {
     expect(both).toBe(neither + 2);
   });
 
+  it('places the organizer logo in the bottom-left corner, not the top, mirroring the supported-by zone', async () => {
+    const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
+    const organizerLogo = await generateQrPngBuffer('https://verify.example.com/verify/ORGANIZER-LOGO');
+    const pageHeight = DEFAULT_CERTIFICATE_LAYOUT.pageHeight!;
+
+    const pdfBytes = await renderCertificatePdf({
+      layout: DEFAULT_CERTIFICATE_LAYOUT,
+      backgroundImageBytes: null,
+      signatureImageBytes: null,
+      designVariant: 'logo_left',
+      organizerLogoImageBytes: organizerLogo,
+      values: {
+        participant_name: 'John Smith',
+        program_title: 'SmartDoc AI Workshop',
+        organized_by: 'Popular Pharmaceuticals PLC',
+        issued_by: 'MN Corporation',
+        training_date: 'March 1, 2026',
+        certificate_id: 'MNC-2026-SDA-000001',
+      },
+      qrPngBuffer: qr,
+    });
+
+    // With no signature and no supported-by logo, only the QR code and the
+    // organizer logo are drawn — the organizer logo is whichever one isn't
+    // in the top-right QR corner.
+    const positions = await getImageDrawPositions(pdfBytes);
+    expect(positions).toHaveLength(2);
+    const organizerLogoPosition = positions.find((p) => p.y < pageHeight / 2)!;
+    expect(organizerLogoPosition).toBeDefined();
+    // Bottom-left corner: low y (near the footer), low-ish x (mirroring the
+    // "Supported by" zone's x = width - 150 on the opposite side).
+    expect(organizerLogoPosition.y).toBeLessThan(150);
+    expect(organizerLogoPosition.x).toBeLessThan(150);
+  });
+
   it('does not overflow the footer for a very long organization or trainer name', async () => {
     const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
     const pdfBytes = await renderCertificatePdf({
@@ -230,16 +317,16 @@ describe('renderCertificatePdf', () => {
 describe('resolveFooterLayout', () => {
   const WIDTH = 841.89;
 
-  it('keeps the signature at its classic left position and no top-left logo by default', () => {
-    expect(resolveFooterLayout(undefined, WIDTH)).toEqual({ trainerX: 145, showTopLeftLogo: false });
+  it('keeps the signature at its classic left position and no organizer logo by default', () => {
+    expect(resolveFooterLayout(undefined, WIDTH)).toEqual({ trainerX: 145, showOrganizerLogo: false, organizerLogoX: 150 });
   });
 
-  it('centers the signature and enables the top-left logo for the logo_left variant', () => {
-    expect(resolveFooterLayout('logo_left', WIDTH)).toEqual({ trainerX: WIDTH / 2, showTopLeftLogo: true });
+  it('centers the signature and enables the organizer logo (mirroring the supported-by zone) for the logo_left variant', () => {
+    expect(resolveFooterLayout('logo_left', WIDTH)).toEqual({ trainerX: WIDTH / 2, showOrganizerLogo: true, organizerLogoX: 150 });
   });
 
   it('treats any unrecognized variant as the classic layout', () => {
-    expect(resolveFooterLayout('future-variant' as never, WIDTH)).toEqual({ trainerX: 145, showTopLeftLogo: false });
+    expect(resolveFooterLayout('future-variant' as never, WIDTH)).toEqual({ trainerX: 145, showOrganizerLogo: false, organizerLogoX: 150 });
   });
 });
 

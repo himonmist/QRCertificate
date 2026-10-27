@@ -25,8 +25,8 @@ const PLACEHOLDER_FIELDS = [
 ];
 
 const DESIGN_VARIANTS = [
-  { value: '', label: 'Classic (signature left, no top-left logo)' },
-  { value: 'logo_left', label: 'Logo top-left, signature centered' },
+  { value: '', label: 'Classic (signature left, no organizer logo)' },
+  { value: 'logo_left', label: 'Logo bottom-left, signature centered' },
 ];
 
 const DEFAULT_TEMPLATE_ID = '__default__';
@@ -162,7 +162,7 @@ export default function TemplatesPage() {
                   {t.backgroundUrl
                     ? 'Custom background'
                     : t.designVariant === 'logo_left'
-                      ? 'Built-in · logo top-left, signature centered'
+                      ? 'Built-in · logo bottom-left, signature centered'
                       : 'Built-in · classic layout'}
                 </div>
               </button>

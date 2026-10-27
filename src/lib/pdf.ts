@@ -19,7 +19,7 @@ export interface RenderCertificateInput {
   signatureImageBytes?: Buffer | null;
   /** Optional organization logo for the default design's "Supported by" footer zone. Omitted entirely (no placeholder) when not provided. */
   logoImageBytes?: Buffer | null;
-  /** Optional, independent logo for the 'logo_left' variant's top-left corner (typically the organizing company's own logo). Has no effect on any other design; omitted entirely (no placeholder, no fallback to logoImageBytes) when not provided. */
+  /** Optional, independent logo for the 'logo_left' variant's bottom-left footer zone (typically the organizing company's own logo), mirroring the "Supported by" logo on the right. Has no effect on any other design; omitted entirely (no placeholder, no fallback to logoImageBytes) when not provided. */
   organizerLogoImageBytes?: Buffer | null;
   /** Selects a built-in vector design variant (see certificateLayout.ts); unset/unrecognized falls back to the classic design. Ignored when backgroundImageBytes is provided. */
   designVariant?: CertificateDesignVariant | null;
@@ -30,8 +30,10 @@ export interface RenderCertificateInput {
 export interface FooterLayout {
   /** x-position (center) of the chief trainer's signature + name block. */
   trainerX: number;
-  /** Whether to also draw the program's logo in the top-left corner. */
-  showTopLeftLogo: boolean;
+  /** Whether to also draw the program's organizer logo in the footer's left zone. */
+  showOrganizerLogo: boolean;
+  /** x-position (center) of the organizer logo, when shown — mirrors the "Supported by" zone on the opposite side. */
+  organizerLogoX: number;
 }
 
 /**
@@ -41,9 +43,9 @@ export interface FooterLayout {
  */
 export function resolveFooterLayout(variant: CertificateDesignVariant | undefined, pageWidth: number): FooterLayout {
   if (variant === 'logo_left') {
-    return { trainerX: pageWidth / 2, showTopLeftLogo: true };
+    return { trainerX: pageWidth / 2, showOrganizerLogo: true, organizerLogoX: 150 };
   }
-  return { trainerX: 145, showTopLeftLogo: false };
+  return { trainerX: 145, showOrganizerLogo: false, organizerLogoX: 150 };
 }
 
 const FIELD_MARGIN = 40;
@@ -318,26 +320,6 @@ async function drawDefaultCertificateDesign(
     borderWidth: 5,
   });
 
-  // logo_left variant only: the organizing company's own logo in the
-  // top-left corner, mirroring the QR code's placement in the top-right.
-  // Entirely independent of the bottom-right "Supported by" logo below —
-  // its own field, no fallback to it — silently skipped if no organizer
-  // logo was uploaded or the image fails to embed, same "no placeholder"
-  // rule as the footer logo below.
-  if (footer.showTopLeftLogo && organizerLogoImageBytes) {
-    try {
-      const image = await embedImageBytes(pdfDoc, organizerLogoImageBytes);
-      const maxLogoWidth = 70;
-      const maxLogoHeight = 70;
-      const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
-      const logoWidth = image.width * scale;
-      const logoHeight = image.height * scale;
-      page.drawImage(image, { x: 45, y: height - 45 - logoHeight, width: logoWidth, height: logoHeight });
-    } catch {
-      // Missing/corrupt logo file: certificate still renders without it.
-    }
-  }
-
   let cursorY = height - 95;
   drawCenteredRich(
     page,
@@ -458,6 +440,30 @@ async function drawDefaultCertificateDesign(
   if (values.trainer_name) {
     zoneCenter(bold, 'Chief Trainer', 10, trainerX, footerLineY - 14, CERT_INK);
     zoneBlock(italic, values.trainer_name, 12, trainerX, footerLineY - 30, 190, CERT_INK, 8);
+  }
+
+  // logo_left variant only: the organizing company's own logo in the
+  // footer's left zone, mirroring the "Supported by" logo's position and
+  // sizing on the right. Entirely independent of that logo — its own
+  // field, no fallback to it — silently skipped if no organizer logo was
+  // uploaded or the image fails to embed, same "no placeholder" rule.
+  if (footer.showOrganizerLogo && organizerLogoImageBytes) {
+    try {
+      const image = await embedImageBytes(pdfDoc, organizerLogoImageBytes);
+      const maxLogoWidth = 150;
+      const maxLogoHeight = 34;
+      const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
+      const logoWidth = image.width * scale;
+      const logoHeight = image.height * scale;
+      page.drawImage(image, {
+        x: footer.organizerLogoX - logoWidth / 2,
+        y: footerLineY - 26,
+        width: logoWidth,
+        height: logoHeight,
+      });
+    } catch {
+      // Missing/corrupt logo file: certificate still renders without it.
+    }
   }
 
   // Logo is entirely optional — drawn only when the program has one

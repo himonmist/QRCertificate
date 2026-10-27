@@ -657,8 +657,8 @@ export default function ProgramParticipantsPage() {
           <div className="card elev-sm">
             <div className="card-title">Organizer logo</div>
             <p className="card-body" style={{ fontSize: 12 }}>
-              Optional, independent of the certificate logo above. Only shown in the top-left
-              corner on templates using the &ldquo;Logo top-left, signature centered&rdquo;
+              Optional, independent of the certificate logo above. Only shown in the bottom-left
+              corner on templates using the &ldquo;Logo bottom-left, signature centered&rdquo;
               design — no effect on any other template.
             </p>
             {program.organizerLogoUrl && (
