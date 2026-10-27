@@ -134,6 +134,28 @@ describe('templateInputSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('accepts a recognized built-in designVariant', () => {
+    const result = templateInputSchema.safeParse({
+      name: 'Logo Left',
+      layoutJson: '{}',
+      designVariant: 'logo_left',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a template with no designVariant (defaults to the classic design)', () => {
+    expect(templateInputSchema.safeParse({ name: 'Plain', layoutJson: '{}' }).success).toBe(true);
+  });
+
+  it('rejects an unrecognized designVariant', () => {
+    const result = templateInputSchema.safeParse({
+      name: 'Bogus',
+      layoutJson: '{}',
+      designVariant: 'not-a-real-variant',
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('loginInputSchema', () => {

@@ -7,6 +7,7 @@ interface Template {
   id: string;
   name: string;
   backgroundUrl: string | null;
+  designVariant: string | null;
   createdAt: string;
 }
 
@@ -23,6 +24,11 @@ const PLACEHOLDER_FIELDS = [
   'qr_code',
 ];
 
+const DESIGN_VARIANTS = [
+  { value: '', label: 'Classic (signature left, no top-left logo)' },
+  { value: 'logo_left', label: 'Logo top-left, signature centered' },
+];
+
 const DEFAULT_TEMPLATE_ID = '__default__';
 
 export default function TemplatesPage() {
@@ -33,6 +39,7 @@ export default function TemplatesPage() {
 
   const [name, setName] = useState('');
   const [backgroundUrl, setBackgroundUrl] = useState('');
+  const [designVariant, setDesignVariant] = useState('');
   const [layoutJson, setLayoutJson] = useState(() => JSON.stringify(DEFAULT_CERTIFICATE_LAYOUT, null, 2));
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -51,6 +58,7 @@ export default function TemplatesPage() {
     setShowAdvanced(false);
     setName('');
     setBackgroundUrl('');
+    setDesignVariant('');
     setLayoutJson(JSON.stringify(DEFAULT_CERTIFICATE_LAYOUT, null, 2));
     setError(null);
   }
@@ -61,7 +69,12 @@ export default function TemplatesPage() {
     const res = await fetch('/api/templates', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, backgroundUrl: backgroundUrl || undefined, layoutJson }),
+      body: JSON.stringify({
+        name,
+        backgroundUrl: backgroundUrl || undefined,
+        designVariant: designVariant || undefined,
+        layoutJson,
+      }),
     });
     if (!res.ok) {
       setError((await res.json()).error ?? 'Failed to create template');
@@ -85,6 +98,7 @@ export default function TemplatesPage() {
         return;
       }
       setBackgroundUrl((await res.json()).url);
+      setDesignVariant('');
     } finally {
       setUploading(false);
     }
@@ -145,7 +159,11 @@ export default function TemplatesPage() {
               >
                 <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 14 }}>{t.name}</div>
                 <div className="text-muted" style={{ fontSize: 11 }}>
-                  {t.backgroundUrl ? 'Custom background' : 'No background image'}
+                  {t.backgroundUrl
+                    ? 'Custom background'
+                    : t.designVariant === 'logo_left'
+                      ? 'Built-in · logo top-left, signature centered'
+                      : 'Built-in · classic layout'}
                 </div>
               </button>
             ))}
@@ -197,6 +215,22 @@ export default function TemplatesPage() {
                 <label>Template name</label>
                 <input value={name} onChange={(e) => setName(e.target.value)} required className="input" />
               </div>
+              {!backgroundUrl && (
+                <div className="field">
+                  <label>Design</label>
+                  <select value={designVariant} onChange={(e) => setDesignVariant(e.target.value)} className="input">
+                    {DESIGN_VARIANTS.map((v) => (
+                      <option key={v.value} value={v.value}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-muted" style={{ fontSize: 11, margin: '4px 0 0' }}>
+                    Only applies to a built-in design. Uploading a background below switches to a
+                    fully custom layout instead.
+                  </p>
+                </div>
+              )}
               {error && <p style={{ color: 'var(--color-accent-700)', fontSize: 13 }}>{error}</p>}
               <button
                 type="button"

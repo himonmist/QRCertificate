@@ -1,5 +1,5 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
-import type { CertificateFieldLayout, CertificateLayout } from './certificateLayout';
+import { isCertificateDesignVariant, type CertificateDesignVariant, type CertificateFieldLayout, type CertificateLayout } from './certificateLayout';
 
 export interface CertificateValues {
   participant_name: string;
@@ -19,8 +19,29 @@ export interface RenderCertificateInput {
   signatureImageBytes?: Buffer | null;
   /** Optional organization logo for the default design's "Issued by" footer zone. Omitted entirely (no placeholder) when not provided. */
   logoImageBytes?: Buffer | null;
+  /** Selects a built-in vector design variant (see certificateLayout.ts); unset/unrecognized falls back to the classic design. Ignored when backgroundImageBytes is provided. */
+  designVariant?: CertificateDesignVariant | null;
   values: CertificateValues;
   qrPngBuffer: Buffer;
+}
+
+export interface FooterLayout {
+  /** x-position (center) of the chief trainer's signature + name block. */
+  trainerX: number;
+  /** Whether to also draw the program's logo in the top-left corner. */
+  showTopLeftLogo: boolean;
+}
+
+/**
+ * Maps a design variant to the footer's layout. Pulled out as a pure
+ * function so the position logic itself is directly unit-testable without
+ * parsing rendered PDF bytes.
+ */
+export function resolveFooterLayout(variant: CertificateDesignVariant | undefined, pageWidth: number): FooterLayout {
+  if (variant === 'logo_left') {
+    return { trainerX: pageWidth / 2, showTopLeftLogo: true };
+  }
+  return { trainerX: 145, showTopLeftLogo: false };
 }
 
 const FIELD_MARGIN = 40;
@@ -265,13 +286,15 @@ async function drawDefaultCertificateDesign(
   height: number,
   values: CertificateValues,
   signatureImageBytes: Buffer | null | undefined,
-  logoImageBytes: Buffer | null | undefined
+  logoImageBytes: Buffer | null | undefined,
+  variant: CertificateDesignVariant | undefined
 ): Promise<void> {
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const italic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
   const nameFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
 
+  const footer = resolveFooterLayout(variant, width);
   const contentMaxWidth = width - 180;
 
   page.drawRectangle({ x: 0, y: 0, width, height, color: rgb(...CERT_CREAM) });
@@ -291,6 +314,24 @@ async function drawDefaultCertificateDesign(
     borderColor: rgb(...CERT_GREEN),
     borderWidth: 5,
   });
+
+  // logo_left variant only: the organizing company's logo in the top-left
+  // corner, mirroring the QR code's placement in the top-right. Silently
+  // skipped if no logo was uploaded or the image fails to embed — same
+  // "no placeholder" rule as the footer logo below.
+  if (footer.showTopLeftLogo && logoImageBytes) {
+    try {
+      const image = await embedImageBytes(pdfDoc, logoImageBytes);
+      const maxLogoWidth = 70;
+      const maxLogoHeight = 70;
+      const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
+      const logoWidth = image.width * scale;
+      const logoHeight = image.height * scale;
+      page.drawImage(image, { x: 45, y: height - 45 - logoHeight, width: logoWidth, height: logoHeight });
+    } catch {
+      // Missing/corrupt logo file: certificate still renders without it.
+    }
+  }
 
   let cursorY = height - 95;
   drawCenteredRich(
@@ -389,7 +430,7 @@ async function drawDefaultCertificateDesign(
   // cursorY, since "ON THIS DAY" above already absorbed the paragraph's
   // variable length.
   const footerLineY = 90;
-  const trainerX = 145;
+  const trainerX = footer.trainerX;
   const orgX = width - 150;
 
   if (signatureImageBytes) {
@@ -521,7 +562,8 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
     // No custom template: the platform's own "Certificate of Participation"
     // design (double green border, presented-to/name block, completion
     // paragraph, organization/date/signature footer).
-    await drawDefaultCertificateDesign(pdfDoc, page, width, height, input.values, input.signatureImageBytes, input.logoImageBytes);
+    const variant = isCertificateDesignVariant(input.designVariant) ? input.designVariant : undefined;
+    await drawDefaultCertificateDesign(pdfDoc, page, width, height, input.values, input.signatureImageBytes, input.logoImageBytes, variant);
 
     const qrImage = await pdfDoc.embedPng(input.qrPngBuffer);
     const qrSize = 62;

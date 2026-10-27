@@ -1,3 +1,14 @@
+// Selects one of the platform's built-in vector certificate designs (the
+// ones drawn in code in pdf.ts, used whenever a program has no custom
+// uploaded background). 'logo_left' moves the chief trainer's signature to
+// the center of the footer and adds the program's logo in the top-left
+// corner; everything else is identical to the classic design.
+export type CertificateDesignVariant = 'logo_left';
+
+export function isCertificateDesignVariant(value: string | null | undefined): value is CertificateDesignVariant {
+  return value === 'logo_left';
+}
+
 export interface CertificateFieldLayout {
   x: number;
   y: number;

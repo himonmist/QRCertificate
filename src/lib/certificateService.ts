@@ -3,7 +3,7 @@ import { generateCertificateUid, buildCertificateUidPrefix } from './certificate
 import { computeVerificationHash } from './crypto';
 import { generateQrPngBuffer } from './qr';
 import { renderCertificatePdf } from './pdf';
-import { parseLayoutJson } from './certificateLayout';
+import { parseLayoutJson, isCertificateDesignVariant } from './certificateLayout';
 import { loadImageBytes } from './storage';
 import { deriveProgramCode } from './programCode';
 import { toCertificateValues, parseSnapshot, type CertificateSnapshot } from './certificateSnapshot';
@@ -292,6 +292,9 @@ export async function renderCertificateAssets(certificateUid: string): Promise<R
     backgroundImageBytes,
     signatureImageBytes,
     logoImageBytes,
+    designVariant: isCertificateDesignVariant(certificate.program.template?.designVariant)
+      ? certificate.program.template?.designVariant
+      : undefined,
     values,
     qrPngBuffer: qrBuffer,
   });

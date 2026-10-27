@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { renderCertificatePdf, wrapTextToLines, fitFontSizeToWidth } from '@/lib/pdf';
+import { renderCertificatePdf, wrapTextToLines, fitFontSizeToWidth, resolveFooterLayout } from '@/lib/pdf';
 import { DEFAULT_CERTIFICATE_LAYOUT } from '@/lib/certificateLayout';
 import { generateQrPngBuffer } from '@/lib/qr';
 
@@ -108,6 +108,59 @@ describe('renderCertificatePdf', () => {
     expect((await PDFDocument.load(withLogo)).getPageCount()).toBe(1);
   });
 
+  it('renders a valid PDF with the logo_left design variant, with or without a logo/signature', async () => {
+    const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
+    const values = {
+      participant_name: 'Dr. Abdul Muhit Chowdhury Abir',
+      program_title: 'AI for Ophthalmologist',
+      organized_by: 'Popular Pharmaceuticals PLC, Ophthalmic Business Unit',
+      issued_by: 'Popular Pharmaceuticals PLC',
+      trainer_name: 'MD Hasan Mahfuz',
+      training_date: 'October 26-27, 2026',
+      certificate_id: 'MNCORPORATION-2026-AFOOBP-000001',
+    };
+
+    for (const [signatureImageBytes, logoImageBytes] of [
+      [null, null],
+      [qr, null],
+      [null, qr],
+      [qr, qr],
+    ] as const) {
+      const pdfBytes = await renderCertificatePdf({
+        layout: DEFAULT_CERTIFICATE_LAYOUT,
+        backgroundImageBytes: null,
+        signatureImageBytes,
+        logoImageBytes,
+        designVariant: 'logo_left',
+        values,
+        qrPngBuffer: qr,
+      });
+      expect(pdfBytes.subarray(0, 5).toString('utf-8')).toBe('%PDF-');
+      expect((await PDFDocument.load(pdfBytes)).getPageCount()).toBe(1);
+    }
+  });
+
+  it('falls back to the classic design for an unrecognized designVariant instead of throwing', async () => {
+    const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
+    const pdfBytes = await renderCertificatePdf({
+      layout: DEFAULT_CERTIFICATE_LAYOUT,
+      backgroundImageBytes: null,
+      signatureImageBytes: null,
+      // Simulates stale/corrupt DB data — must not crash certificate rendering.
+      designVariant: 'some-removed-or-invalid-variant' as never,
+      values: {
+        participant_name: 'John Smith',
+        program_title: 'SmartDoc AI Workshop',
+        organized_by: 'MN Corporation',
+        issued_by: 'MN Corporation',
+        training_date: 'March 1, 2026',
+        certificate_id: 'MNC-2026-SDA-000001',
+      },
+      qrPngBuffer: qr,
+    });
+    expect((await PDFDocument.load(pdfBytes)).getPageCount()).toBe(1);
+  });
+
   it('does not overflow the footer for a very long organization or trainer name', async () => {
     const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
     const pdfBytes = await renderCertificatePdf({
@@ -128,6 +181,22 @@ describe('renderCertificatePdf', () => {
 
     expect(pdfBytes.subarray(0, 5).toString('utf-8')).toBe('%PDF-');
     expect((await PDFDocument.load(pdfBytes)).getPageCount()).toBe(1);
+  });
+});
+
+describe('resolveFooterLayout', () => {
+  const WIDTH = 841.89;
+
+  it('keeps the signature at its classic left position and no top-left logo by default', () => {
+    expect(resolveFooterLayout(undefined, WIDTH)).toEqual({ trainerX: 145, showTopLeftLogo: false });
+  });
+
+  it('centers the signature and enables the top-left logo for the logo_left variant', () => {
+    expect(resolveFooterLayout('logo_left', WIDTH)).toEqual({ trainerX: WIDTH / 2, showTopLeftLogo: true });
+  });
+
+  it('treats any unrecognized variant as the classic layout', () => {
+    expect(resolveFooterLayout('future-variant' as never, WIDTH)).toEqual({ trainerX: 145, showTopLeftLogo: false });
   });
 });
 

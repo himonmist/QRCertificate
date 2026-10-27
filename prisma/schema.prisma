@@ -111,6 +111,12 @@ model CertificateTemplate {
   name          String
   backgroundUrl String?
   layoutJson    String // JSON string: placeholder positions, fonts, colors
+  // Selects one of the platform's built-in vector designs (see
+  // src/lib/certificateLayout.ts CertificateDesignVariant) instead of the
+  // default one. Only takes effect when backgroundUrl is unset — a
+  // template with a custom uploaded background always renders from
+  // layoutJson instead, regardless of this field.
+  designVariant String?
   createdAt     DateTime @default(now())
 
   programs     TrainingProgram[]

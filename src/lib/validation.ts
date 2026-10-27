@@ -80,6 +80,7 @@ export const templateInputSchema = z.object({
   name: z.string().trim().min(1).max(200),
   backgroundUrl: trustedImageRefSchema('backgroundUrl must be a path returned by an image upload endpoint').optional(),
   layoutJson: z.string().min(2),
+  designVariant: z.enum(['logo_left']).optional(),
 });
 
 export const revokeInputSchema = z.object({
