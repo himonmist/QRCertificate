@@ -7,6 +7,7 @@ import { parseLayoutJson, isCertificateDesignVariant } from './certificateLayout
 import { loadImageBytes } from './storage';
 import { deriveProgramCode } from './programCode';
 import { toCertificateValues, parseSnapshot, type CertificateSnapshot } from './certificateSnapshot';
+import { Prisma } from '@prisma/client';
 import type { Certificate, Participant, ProgramTrainer, Trainer, TrainingProgram, CertificateTemplate } from '@prisma/client';
 
 export interface GenerateOptions {
@@ -99,6 +100,66 @@ async function buildAndPersistCertificate(
 }
 
 /**
+ * The next sequence number to try for a given prefix, based on the highest
+ * sequence actually in use among existing certificates sharing it — NOT a
+ * row count. A count undercounts once any certificate sharing the prefix
+ * has been deleted (see deleteCertificate), silently recomputing a
+ * sequence number that's already in use and failing certificateUid's
+ * unique constraint, so this reads and parses the real uids instead.
+ */
+async function nextSequenceHint(uidPrefix: string): Promise<number> {
+  const rows = await prisma.certificate.findMany({
+    where: { certificateUid: { startsWith: uidPrefix } },
+    select: { certificateUid: true },
+  });
+  let max = 0;
+  for (const { certificateUid } of rows) {
+    const n = Number.parseInt(certificateUid.slice(uidPrefix.length), 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max;
+}
+
+function isCertificateUidConflict(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2002' &&
+    Array.isArray(error.meta?.target) &&
+    (error.meta.target as string[]).includes('certificateUid')
+  );
+}
+
+/**
+ * Persists a certificate starting at startingSequence, retrying with the
+ * next sequence number on a unique-constraint collision — belt-and-braces
+ * alongside nextSequenceHint for the case two requests (e.g. two
+ * concurrent reissues in the same program) compute the same "next" number
+ * at once; the loser retries instead of failing the request outright.
+ */
+async function persistCertificateWithNextSequence(
+  program: ProgramWithRelations,
+  participant: Participant,
+  parts: { prefix: string; year: number; programCode: string },
+  startingSequence: number
+): Promise<Certificate> {
+  const MAX_ATTEMPTS = 5;
+  let sequence = startingSequence;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const certificateUid = generateCertificateUid({ ...parts, sequence });
+    try {
+      return await buildAndPersistCertificate(program, participant, certificateUid);
+    } catch (error) {
+      if (attempt < MAX_ATTEMPTS && isCertificateUidConflict(error)) {
+        sequence += 1;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('Failed to generate a unique certificate id after multiple attempts');
+}
+
+/**
  * Generates certificates for eligible participants of a program. Idempotent
  * per participant: anyone who already has an active certificate is skipped
  * rather than issued a second one (use reissueCertificate for corrections).
@@ -133,7 +194,8 @@ export async function generateCertificatesForProgram(
   // Sequence is scoped to the exact prefix/year/programCode combination
   // (not to this program's row id) so two programs that happen to produce
   // the same human-readable code can never collide on the same uid.
-  let sequence = await prisma.certificate.count({ where: { certificateUid: { startsWith: uidPrefix } } });
+  let sequence = await nextSequenceHint(uidPrefix);
+  const year = program.startDate.getFullYear();
 
   const results: GenerateResultItem[] = [];
 
@@ -148,14 +210,18 @@ export async function generateCertificatesForProgram(
     }
 
     sequence += 1;
-    const certificateUid = generateCertificateUid({
-      prefix: options.prefix,
-      year: program.startDate.getFullYear(),
-      programCode,
-      sequence,
-    });
+    const certificate = await persistCertificateWithNextSequence(
+      program,
+      participant,
+      { prefix: options.prefix, year, programCode },
+      sequence
+    );
+    // The retry loop may have advanced past `sequence` on a collision —
+    // resync so the next participant in this loop starts after it instead
+    // of re-discovering the same collisions one by one.
+    const used = Number.parseInt(certificate.certificateUid.slice(uidPrefix.length), 10);
+    if (Number.isFinite(used) && used > sequence) sequence = used;
 
-    const certificate = await buildAndPersistCertificate(program, participant, certificateUid);
     results.push({ participantId: participant.id, certificateUid: certificate.certificateUid, status: 'generated' });
   }
 
@@ -187,25 +253,23 @@ export async function reissueCertificate(oldCertificateUid: string): Promise<Cer
   const [prefix, , programCode] = old.certificateUid.split('-');
   const resolvedPrefix = prefix || 'CERT';
   const resolvedProgramCode = programCode || deriveProgramCode(old.program.title);
+  const year = old.program.startDate.getFullYear();
   const uidPrefix = buildCertificateUidPrefix({
     prefix: resolvedPrefix,
-    year: old.program.startDate.getFullYear(),
+    year,
     programCode: resolvedProgramCode,
   });
-  const sequence =
-    (await prisma.certificate.count({ where: { certificateUid: { startsWith: uidPrefix } } })) + 1;
-
-  const certificateUid = generateCertificateUid({
-    prefix: resolvedPrefix,
-    year: old.program.startDate.getFullYear(),
-    programCode: resolvedProgramCode,
-    sequence,
-  });
+  const sequence = (await nextSequenceHint(uidPrefix)) + 1;
 
   // Reissue re-snapshots current participant/program data (a correction may
   // be exactly why it's being reissued), unlike a plain re-render of an
   // existing certificate, which must never change its frozen snapshot.
-  const newCertificate = await buildAndPersistCertificate(old.program, old.participant, certificateUid);
+  const newCertificate = await persistCertificateWithNextSequence(
+    old.program,
+    old.participant,
+    { prefix: resolvedPrefix, year, programCode: resolvedProgramCode },
+    sequence
+  );
 
   await prisma.certificate.update({
     where: { id: old.id },

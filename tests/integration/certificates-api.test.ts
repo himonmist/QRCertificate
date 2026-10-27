@@ -325,4 +325,81 @@ describe('Certificate generation engine', () => {
     expect(restored?.status).toBe('active');
     expect(restored?.supersededById).toBeNull();
   });
+
+  it('reissues a certificate without colliding on uid after an earlier certificate in the same program was deleted', async () => {
+    const { program, participants } = await setupProgramWithParticipants(3);
+    const genRes = await generateCertificates(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/certificates/generate`, 'POST', { prefix: 'MNC' }),
+      { params: { id: program.id } }
+    );
+    const { results } = await genRes.json();
+    expect(results).toHaveLength(3);
+
+    // Delete the middle certificate (e.g. an admin removing a duplicate),
+    // leaving a gap in the sequence: seq 1 and seq 3 remain, seq 2 is gone.
+    const sorted = [...results].sort((a, b) => a.certificateUid.localeCompare(b.certificateUid));
+    const [first, middle] = sorted;
+    await deleteCertificate(
+      new NextRequest(`http://localhost:3000/api/certificates/${middle.certificateUid}`, {
+        method: 'DELETE',
+        headers: ADMIN_HEADERS,
+      }),
+      { params: { uid: middle.certificateUid } }
+    );
+
+    // Reissuing the first certificate now has only 2 remaining rows to
+    // count against a prefix that has actually issued 3 — a naive
+    // count()+1 sequence would recompute the already-used seq 3 and fail
+    // the database's unique constraint on certificateUid.
+    const reissueRes = await reissueCertificate(
+      jsonRequest(`http://localhost:3000/api/certificates/${first.certificateUid}/reissue`, 'POST'),
+      { params: { uid: first.certificateUid } }
+    );
+    expect(reissueRes.status).toBe(201);
+    const { certificate: reissued } = await reissueRes.json();
+    expect(reissued.certificateUid).not.toBe(first.certificateUid);
+
+    void participants;
+  });
+
+  it('bulk-generates a new certificate without colliding on uid after an earlier certificate was deleted', async () => {
+    const { program, participants } = await setupProgramWithParticipants(3);
+    const genRes = await generateCertificates(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/certificates/generate`, 'POST', { prefix: 'MNC' }),
+      { params: { id: program.id } }
+    );
+    const { results } = await genRes.json();
+    const sorted = [...results].sort((a: { certificateUid: string }, b: { certificateUid: string }) =>
+      a.certificateUid.localeCompare(b.certificateUid)
+    );
+
+    // Delete the middle certificate, same gap scenario as above, then add a
+    // brand new participant and generate for them.
+    await deleteCertificate(
+      new NextRequest(`http://localhost:3000/api/certificates/${sorted[1].certificateUid}`, {
+        method: 'DELETE',
+        headers: ADMIN_HEADERS,
+      }),
+      { params: { uid: sorted[1].certificateUid } }
+    );
+
+    const newParticipantRes = await createParticipant(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/participants`, 'POST', {
+        fullName: 'Fourth Participant',
+      }),
+      { params: { id: program.id } }
+    );
+    const { participant: newParticipant } = await newParticipantRes.json();
+
+    const genAgainRes = await generateCertificates(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/certificates/generate`, 'POST', { prefix: 'MNC' }),
+      { params: { id: program.id } }
+    );
+    expect(genAgainRes.status).toBe(200);
+    const { results: resultsAgain } = await genAgainRes.json();
+    const newResult = resultsAgain.find((r: { participantId: string }) => r.participantId === newParticipant.id);
+    expect(newResult?.status).toBe('generated');
+
+    void participants;
+  });
 });
