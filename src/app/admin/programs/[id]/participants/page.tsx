@@ -93,6 +93,8 @@ export default function ProgramParticipantsPage() {
   const [programForm, setProgramForm] = useState<ProgramForm | null>(null);
   const [programError, setProgramError] = useState<string | null>(null);
   const [savingProgram, setSavingProgram] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Participant | null>(null);
+  const [deletingParticipant, setDeletingParticipant] = useState(false);
 
   async function loadAll() {
     const [programRes, participantsRes, trainersRes, templatesRes] = await Promise.all([
@@ -127,6 +129,23 @@ export default function ProgramParticipantsPage() {
     setSingleForm({ fullName: '', designation: '', email: '' });
     setShowAddForm(false);
     loadAll();
+  }
+
+  async function handleDeleteParticipant() {
+    if (!deleteTarget) return;
+    setError(null);
+    setDeletingParticipant(true);
+    try {
+      const res = await fetch(`/api/participants/${deleteTarget.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        setError((await res.json()).error);
+        return;
+      }
+      setDeleteTarget(null);
+      loadAll();
+    } finally {
+      setDeletingParticipant(false);
+    }
   }
 
   async function handleBulkPreview() {
@@ -547,6 +566,7 @@ export default function ProgramParticipantsPage() {
                 <th>Designation</th>
                 <th>Organization</th>
                 <th>Status</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -560,11 +580,22 @@ export default function ProgramParticipantsPage() {
                       {p.status === 'certificate_generated' ? 'Certificate issued' : 'Registered'}
                     </span>
                   </td>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {p.certificates.length === 0 && (
+                      <button
+                        onClick={() => setDeleteTarget(p)}
+                        className="btn btn-ghost"
+                        style={{ color: 'var(--color-accent-700)' }}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
               {participants.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="text-muted">
+                  <td colSpan={5} className="text-muted">
                     No participants yet.
                   </td>
                 </tr>
@@ -709,6 +740,30 @@ export default function ProgramParticipantsPage() {
           </div>
         </div>
       </div>
+
+      {deleteTarget && (
+        <div className="dialog-backdrop" onClick={() => setDeleteTarget(null)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-title">Delete participant</div>
+            <p className="dialog-body">
+              This removes <strong>{deleteTarget.fullName}</strong> from this program. This cannot
+              be undone. No certificate has been issued to them yet, so nothing else is affected.
+            </p>
+            <div className="dialog-actions">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deletingParticipant}
+              >
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleDeleteParticipant} disabled={deletingParticipant}>
+                {deletingParticipant ? 'Deleting…' : 'Delete participant'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

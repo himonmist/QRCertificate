@@ -9,6 +9,7 @@ import {
   POST as createParticipant,
 } from '@/app/api/programs/[id]/participants/route';
 import { POST as bulkImportParticipants } from '@/app/api/programs/[id]/participants/bulk/route';
+import { POST as generateCertificates } from '@/app/api/programs/[id]/certificates/generate/route';
 import { DELETE as deleteParticipant } from '@/app/api/participants/[id]/route';
 import { prisma } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
@@ -185,5 +186,63 @@ describe('Programs + Participants API', () => {
       { params: { id: janeParticipant.id } }
     );
     expect(deleteRes.status).toBe(200);
+  });
+
+  it('blocks deleting a participant once a certificate has been issued for them', async () => {
+    const trainerRes = await createTrainer(
+      jsonRequest('http://localhost:3000/api/trainers', 'POST', {
+        name: 'Trainer For Delete Guard',
+        email: `trainer-delete-guard-${Date.now()}@example.com`,
+      })
+    );
+    const { trainer } = await trainerRes.json();
+
+    const programRes = await createProgram(
+      jsonRequest('http://localhost:3000/api/programs', 'POST', {
+        title: 'Delete Guard Workshop',
+        category: 'workshop',
+        organizedBy: 'MN Corporation',
+        issuedBy: 'MN Corporation',
+        startDate: '2026-05-01',
+        endDate: '2026-05-02',
+      })
+    );
+    const { program } = await programRes.json();
+
+    await assignTrainer(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/trainers`, 'POST', {
+        trainerId: trainer.id,
+        role: 'chief_trainer',
+      }),
+      { params: { id: program.id } }
+    );
+
+    const participantRes = await createParticipant(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/participants`, 'POST', {
+        fullName: 'Certified Participant',
+      }),
+      { params: { id: program.id } }
+    );
+    const { participant } = await participantRes.json();
+
+    const genRes = await generateCertificates(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/certificates/generate`, 'POST', { prefix: 'MNC' }),
+      { params: { id: program.id } }
+    );
+    expect(genRes.status).toBe(200);
+    const { generated } = await genRes.json();
+    expect(generated).toBe(1);
+
+    const deleteRes = await deleteParticipant(
+      new NextRequest(`http://localhost:3000/api/participants/${participant.id}`, {
+        method: 'DELETE',
+        headers: ADMIN_HEADERS,
+      }),
+      { params: { id: participant.id } }
+    );
+    expect(deleteRes.status).toBe(409);
+
+    const stillThere = await prisma.participant.findUnique({ where: { id: participant.id } });
+    expect(stillThere).not.toBeNull();
   });
 });
