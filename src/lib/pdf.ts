@@ -1,5 +1,6 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
 import { isCertificateDesignVariant, type CertificateDesignVariant, type CertificateFieldLayout, type CertificateLayout } from './certificateLayout';
+import { stripNearWhiteBackground } from './logoBackground';
 
 export interface CertificateValues {
   participant_name: string;
@@ -449,15 +450,22 @@ async function drawDefaultCertificateDesign(
   // uploaded or the image fails to embed, same "no placeholder" rule.
   if (footer.showOrganizerLogo && organizerLogoImageBytes) {
     try {
-      const image = await embedImageBytes(pdfDoc, organizerLogoImageBytes);
-      const maxLogoWidth = 150;
-      const maxLogoHeight = 34;
+      // Most uploaded company logos are exported on a plain white canvas;
+      // left as-is that shows up as a stark white box against the
+      // certificate's cream background, so lighten-to-transparent it first.
+      // (No-op, and never throws, for non-PNG bytes — see stripNearWhiteBackground.)
+      const image = await embedImageBytes(pdfDoc, stripNearWhiteBackground(organizerLogoImageBytes));
+      const maxLogoWidth = 120;
+      const maxLogoHeight = 70;
       const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
       const logoWidth = image.width * scale;
       const logoHeight = image.height * scale;
+      // Centered on the same vertical midpoint the old, smaller box used,
+      // so growing the logo doesn't visually drift it up or down.
+      const logoCenterY = footerLineY - 9;
       page.drawImage(image, {
         x: footer.organizerLogoX - logoWidth / 2,
-        y: footerLineY - 26,
+        y: logoCenterY - logoHeight / 2,
         width: logoWidth,
         height: logoHeight,
       });
