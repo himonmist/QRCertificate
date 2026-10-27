@@ -8,20 +8,30 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
   const admin = getAdminContext(request);
   if (!admin) return unauthorized();
 
-  const participant = await prisma.participant.findUnique({
-    where: { id: params.id },
-    include: { _count: { select: { certificates: true } } },
-  });
+  const participant = await prisma.participant.findUnique({ where: { id: params.id } });
   if (!participant) return notFound('Participant not found');
 
-  if (participant._count.certificates > 0) {
-    return NextResponse.json(
-      { error: 'Cannot delete a participant with issued certificates. Revoke the certificate instead.' },
-      { status: 409 }
-    );
-  }
+  // Deleting a participant also deletes any certificate(s) issued to them
+  // (and those certificates' scan history) — there is no certificate left
+  // to belong to once the participant is gone, so there's nothing to keep.
+  const certificates = await prisma.certificate.findMany({
+    where: { participantId: params.id },
+    select: { id: true },
+  });
+  const certificateIds = certificates.map((c) => c.id);
 
-  await prisma.participant.delete({ where: { id: params.id } });
-  await logAudit({ adminId: admin.adminId, action: 'delete', entity: 'participant', entityId: params.id });
+  await prisma.$transaction([
+    prisma.verificationLog.deleteMany({ where: { certificateId: { in: certificateIds } } }),
+    prisma.certificate.deleteMany({ where: { id: { in: certificateIds } } }),
+    prisma.participant.delete({ where: { id: params.id } }),
+  ]);
+
+  await logAudit({
+    adminId: admin.adminId,
+    action: 'delete',
+    entity: 'participant',
+    entityId: params.id,
+    details: { deletedCertificateCount: certificateIds.length },
+  });
   return NextResponse.json({ ok: true });
 }

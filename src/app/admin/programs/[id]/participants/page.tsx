@@ -602,15 +602,13 @@ export default function ProgramParticipantsPage() {
                     </span>
                   </td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    {p.certificates.length === 0 && (
-                      <button
-                        onClick={() => setDeleteTarget(p)}
-                        className="btn btn-ghost"
-                        style={{ color: 'var(--color-accent-700)' }}
-                      >
-                        Delete
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setDeleteTarget(p)}
+                      className="btn btn-ghost"
+                      style={{ color: 'var(--color-accent-700)' }}
+                    >
+                      Delete
+                    </button>
                     {p.certificates.some((c) => c.status !== 'superseded') && (
                       <button
                         onClick={() => handleRegenerateCertificate(p)}
@@ -777,7 +775,10 @@ export default function ProgramParticipantsPage() {
             <div className="dialog-title">Delete participant</div>
             <p className="dialog-body">
               This removes <strong>{deleteTarget.fullName}</strong> from this program. This cannot
-              be undone. No certificate has been issued to them yet, so nothing else is affected.
+              be undone.{' '}
+              {deleteTarget.certificates.length > 0
+                ? 'This also permanently deletes their issued certificate(s) and scan history — their verify page(s) will show "not found" afterward.'
+                : 'No certificate has been issued to them yet, so nothing else is affected.'}
             </p>
             <div className="dialog-actions">
               <button

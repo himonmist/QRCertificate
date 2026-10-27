@@ -11,6 +11,8 @@ import {
 import { POST as bulkImportParticipants } from '@/app/api/programs/[id]/participants/bulk/route';
 import { POST as generateCertificates } from '@/app/api/programs/[id]/certificates/generate/route';
 import { DELETE as deleteParticipant } from '@/app/api/participants/[id]/route';
+import { POST as reissueCertificate } from '@/app/api/certificates/[uid]/reissue/route';
+import { GET as publicVerify } from '@/app/api/public/verify/[uid]/route';
 import { prisma } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 
@@ -188,7 +190,7 @@ describe('Programs + Participants API', () => {
     expect(deleteRes.status).toBe(200);
   });
 
-  it('blocks deleting a participant once a certificate has been issued for them', async () => {
+  it('deletes a participant who already has a certificate, cascading to the certificate and its scan history', async () => {
     const trainerRes = await createTrainer(
       jsonRequest('http://localhost:3000/api/trainers', 'POST', {
         name: 'Trainer For Delete Guard',
@@ -230,8 +232,19 @@ describe('Programs + Participants API', () => {
       { params: { id: program.id } }
     );
     expect(genRes.status).toBe(200);
-    const { generated } = await genRes.json();
+    const { generated, results } = await genRes.json();
     expect(generated).toBe(1);
+    const certificateUid = results[0].certificateUid;
+
+    // Scan it once so it has scan history that must be cleaned up too.
+    await publicVerify(
+      new NextRequest(`http://localhost:3000/api/public/verify/${certificateUid}`, {
+        headers: { 'x-forwarded-for': '203.0.113.15' },
+      }),
+      { params: { uid: certificateUid } }
+    );
+    const certificateBefore = await prisma.certificate.findUnique({ where: { certificateUid } });
+    expect(await prisma.verificationLog.count({ where: { certificateId: certificateBefore!.id } })).toBe(1);
 
     const deleteRes = await deleteParticipant(
       new NextRequest(`http://localhost:3000/api/participants/${participant.id}`, {
@@ -240,9 +253,60 @@ describe('Programs + Participants API', () => {
       }),
       { params: { id: participant.id } }
     );
-    expect(deleteRes.status).toBe(409);
+    expect(deleteRes.status).toBe(200);
 
-    const stillThere = await prisma.participant.findUnique({ where: { id: participant.id } });
-    expect(stillThere).not.toBeNull();
+    expect(await prisma.participant.findUnique({ where: { id: participant.id } })).toBeNull();
+    expect(await prisma.certificate.findUnique({ where: { certificateUid } })).toBeNull();
+    expect(await prisma.verificationLog.count({ where: { certificateId: certificateBefore!.id } })).toBe(0);
+  });
+
+  it('deletes a participant whose certificate was reissued, removing both the superseded and the active row', async () => {
+    const programRes = await createProgram(
+      jsonRequest('http://localhost:3000/api/programs', 'POST', {
+        title: 'Delete Reissued Workshop',
+        category: 'workshop',
+        organizedBy: 'MN Corporation',
+        issuedBy: 'MN Corporation',
+        startDate: '2026-05-01',
+        endDate: '2026-05-02',
+      })
+    );
+    const { program } = await programRes.json();
+
+    const participantRes = await createParticipant(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/participants`, 'POST', {
+        fullName: 'Reissued Then Deleted',
+      }),
+      { params: { id: program.id } }
+    );
+    const { participant } = await participantRes.json();
+
+    const genRes = await generateCertificates(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/certificates/generate`, 'POST', { prefix: 'MNC' }),
+      { params: { id: program.id } }
+    );
+    const { results } = await genRes.json();
+    const originalUid = results[0].certificateUid;
+
+    const reissueRes = await reissueCertificate(
+      jsonRequest(`http://localhost:3000/api/certificates/${originalUid}/reissue`, 'POST'),
+      { params: { uid: originalUid } }
+    );
+    expect(reissueRes.status).toBe(201);
+    const { certificate: newCertificate } = await reissueRes.json();
+
+    expect(await prisma.certificate.count({ where: { participantId: participant.id } })).toBe(2);
+
+    const deleteRes = await deleteParticipant(
+      new NextRequest(`http://localhost:3000/api/participants/${participant.id}`, {
+        method: 'DELETE',
+        headers: ADMIN_HEADERS,
+      }),
+      { params: { id: participant.id } }
+    );
+    expect(deleteRes.status).toBe(200);
+
+    expect(await prisma.certificate.findUnique({ where: { certificateUid: originalUid } })).toBeNull();
+    expect(await prisma.certificate.findUnique({ where: { certificateUid: newCertificate.certificateUid } })).toBeNull();
   });
 });
