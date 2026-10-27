@@ -95,6 +95,7 @@ export default function ProgramParticipantsPage() {
   const [savingProgram, setSavingProgram] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Participant | null>(null);
   const [deletingParticipant, setDeletingParticipant] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
 
   async function loadAll() {
     const [programRes, participantsRes, trainersRes, templatesRes] = await Promise.all([
@@ -145,6 +146,26 @@ export default function ProgramParticipantsPage() {
       loadAll();
     } finally {
       setDeletingParticipant(false);
+    }
+  }
+
+  async function handleRegenerateCertificate(p: Participant) {
+    const current = p.certificates.find((c) => c.status !== 'superseded');
+    if (!current) return;
+    setError(null);
+    setNotice(null);
+    setRegeneratingId(p.id);
+    try {
+      const res = await fetch(`/api/certificates/${current.certificateUid}/reissue`, { method: 'POST' });
+      if (!res.ok) {
+        setError((await res.json()).error);
+        return;
+      }
+      const { certificate } = await res.json();
+      setNotice(`Regenerated ${p.fullName}'s certificate as ${certificate.certificateUid}.`);
+      loadAll();
+    } finally {
+      setRegeneratingId(null);
     }
   }
 
@@ -588,6 +609,15 @@ export default function ProgramParticipantsPage() {
                         style={{ color: 'var(--color-accent-700)' }}
                       >
                         Delete
+                      </button>
+                    )}
+                    {p.certificates.some((c) => c.status !== 'superseded') && (
+                      <button
+                        onClick={() => handleRegenerateCertificate(p)}
+                        disabled={regeneratingId === p.id}
+                        className="btn btn-ghost"
+                      >
+                        {regeneratingId === p.id ? 'Regenerating…' : 'Regenerate'}
                       </button>
                     )}
                   </td>
