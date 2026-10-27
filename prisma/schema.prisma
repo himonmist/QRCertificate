@@ -63,6 +63,11 @@ model TrainingProgram {
   location    String?
   duration    String?
   logoUrl     String? // optional organization logo shown in the certificate's "Issued by" footer zone; omitted entirely when unset
+  // Separate, independent logo for the top-left corner of the 'logo_left'
+  // design variant (see certificateLayout.ts) — typically the organizing
+  // company's own logo, distinct from logoUrl's "Supported by" branding.
+  // Has no effect on any other design.
+  organizerLogoUrl String?
 
   templateId String?
   template   CertificateTemplate? @relation(fields: [templateId], references: [id])

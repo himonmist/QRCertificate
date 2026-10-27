@@ -36,6 +36,7 @@ interface ProgramDetail {
   location: string | null;
   templateId: string | null;
   logoUrl: string | null;
+  organizerLogoUrl: string | null;
   trainers: { role: string; trainer: Trainer }[];
 }
 
@@ -86,6 +87,8 @@ export default function ProgramParticipantsPage() {
   const [prefix, setPrefix] = useState('MNC');
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
+  const [organizerLogoUploading, setOrganizerLogoUploading] = useState(false);
+  const [organizerLogoError, setOrganizerLogoError] = useState<string | null>(null);
   const [editingProgram, setEditingProgram] = useState(false);
   const [programForm, setProgramForm] = useState<ProgramForm | null>(null);
   const [programError, setProgramError] = useState<string | null>(null);
@@ -236,6 +239,43 @@ export default function ProgramParticipantsPage() {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ logoUrl: null }),
+    });
+    loadAll();
+  }
+
+  async function handleOrganizerLogoUpload(file: File) {
+    setOrganizerLogoError(null);
+    setOrganizerLogoUploading(true);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const uploadRes = await fetch('/api/uploads/logos', { method: 'POST', body: form });
+      if (!uploadRes.ok) {
+        setOrganizerLogoError((await uploadRes.json().catch(() => ({}))).error ?? 'Upload failed');
+        return;
+      }
+      const { url } = await uploadRes.json();
+      const putRes = await fetch(`/api/programs/${programId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ organizerLogoUrl: url }),
+      });
+      if (!putRes.ok) {
+        setOrganizerLogoError((await putRes.json().catch(() => ({}))).error ?? 'Failed to save logo');
+        return;
+      }
+      loadAll();
+    } finally {
+      setOrganizerLogoUploading(false);
+    }
+  }
+
+  async function handleOrganizerLogoRemove() {
+    setOrganizerLogoError(null);
+    await fetch(`/api/programs/${programId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ organizerLogoUrl: null }),
     });
     loadAll();
   }
@@ -612,6 +652,41 @@ export default function ProgramParticipantsPage() {
               />
             </label>
             {logoError && <p style={{ color: 'var(--color-accent-700)', fontSize: 12 }}>{logoError}</p>}
+          </div>
+
+          <div className="card elev-sm">
+            <div className="card-title">Organizer logo</div>
+            <p className="card-body" style={{ fontSize: 12 }}>
+              Optional, independent of the certificate logo above. Only shown in the top-left
+              corner on templates using the &ldquo;Logo top-left, signature centered&rdquo;
+              design — no effect on any other template.
+            </p>
+            {program.organizerLogoUrl && (
+              <div className="flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={program.organizerLogoUrl} alt="Organizer logo" style={{ height: 28 }} />
+                <button className="btn btn-ghost" onClick={handleOrganizerLogoRemove}>
+                  Remove
+                </button>
+              </div>
+            )}
+            <label className="btn btn-secondary" style={{ cursor: 'pointer', alignSelf: 'flex-start' }}>
+              {organizerLogoUploading ? 'Uploading…' : program.organizerLogoUrl ? 'Replace logo' : 'Upload logo'}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                disabled={organizerLogoUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleOrganizerLogoUpload(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            {organizerLogoError && (
+              <p style={{ color: 'var(--color-accent-700)', fontSize: 12 }}>{organizerLogoError}</p>
+            )}
           </div>
 
           <div className="card elev-md">

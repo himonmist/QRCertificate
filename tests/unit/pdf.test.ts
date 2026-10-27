@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFDict, StandardFonts } from 'pdf-lib';
 import { renderCertificatePdf, wrapTextToLines, fitFontSizeToWidth, resolveFooterLayout } from '@/lib/pdf';
 import { DEFAULT_CERTIFICATE_LAYOUT } from '@/lib/certificateLayout';
 import { generateQrPngBuffer } from '@/lib/qr';
+
+async function countImageXObjects(pdfBytes: Buffer): Promise<number> {
+  const doc = await PDFDocument.load(pdfBytes);
+  const resources = doc.getPage(0).node.Resources();
+  const xobjects = resources?.lookup(PDFName.of('XObject'), PDFDict);
+  return xobjects ? xobjects.keys().length : 0;
+}
 
 describe('renderCertificatePdf', () => {
   it('produces a single-page, parseable PDF containing no background/signature images', async () => {
@@ -159,6 +166,42 @@ describe('renderCertificatePdf', () => {
       qrPngBuffer: qr,
     });
     expect((await PDFDocument.load(pdfBytes)).getPageCount()).toBe(1);
+  });
+
+  it('draws the top-left organizer logo independently of the bottom-right supported-by logo', async () => {
+    const qr = await generateQrPngBuffer('https://verify.example.com/verify/MNC-2026-SDA-000001');
+    // Two distinct PNGs standing in for two different uploaded logos.
+    const organizerLogo = await generateQrPngBuffer('https://verify.example.com/verify/ORGANIZER-LOGO');
+    const supportedByLogo = await generateQrPngBuffer('https://verify.example.com/verify/SUPPORTED-BY-LOGO');
+    const values = {
+      participant_name: 'John Smith',
+      program_title: 'SmartDoc AI Workshop',
+      organized_by: 'Popular Pharmaceuticals PLC',
+      issued_by: 'MN Corporation',
+      training_date: 'March 1, 2026',
+      certificate_id: 'MNC-2026-SDA-000001',
+    };
+    const render = (opts: { logoImageBytes?: Buffer | null; organizerLogoImageBytes?: Buffer | null }) =>
+      renderCertificatePdf({
+        layout: DEFAULT_CERTIFICATE_LAYOUT,
+        backgroundImageBytes: null,
+        signatureImageBytes: null,
+        designVariant: 'logo_left',
+        values,
+        qrPngBuffer: qr,
+        ...opts,
+      });
+
+    const neither = await countImageXObjects(await render({}));
+    const organizerOnly = await countImageXObjects(await render({ organizerLogoImageBytes: organizerLogo }));
+    const supportedByOnly = await countImageXObjects(await render({ logoImageBytes: supportedByLogo }));
+    const both = await countImageXObjects(await render({ logoImageBytes: supportedByLogo, organizerLogoImageBytes: organizerLogo }));
+
+    // Each logo is independently optional and additive — setting one must
+    // not draw, substitute for, or suppress the other.
+    expect(organizerOnly).toBe(neither + 1);
+    expect(supportedByOnly).toBe(neither + 1);
+    expect(both).toBe(neither + 2);
   });
 
   it('does not overflow the footer for a very long organization or trainer name', async () => {

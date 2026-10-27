@@ -6,9 +6,27 @@ import { PUT as updateProgramById } from '@/app/api/programs/[id]/route';
 import { POST as createParticipant } from '@/app/api/programs/[id]/participants/route';
 import { POST as generateCertificates } from '@/app/api/programs/[id]/certificates/generate/route';
 import { GET as getCertificatePdf } from '@/app/api/certificates/[uid]/pdf/route';
+import { POST as uploadLogo } from '@/app/api/uploads/logos/route';
 import { prisma } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { DEFAULT_CERTIFICATE_LAYOUT } from '@/lib/certificateLayout';
+import { generateQrPngBuffer } from '@/lib/qr';
+import { PDFDocument, PDFName, PDFDict } from 'pdf-lib';
+
+async function countImageXObjects(pdfBytes: Buffer): Promise<number> {
+  const doc = await PDFDocument.load(pdfBytes);
+  const resources = doc.getPage(0).node.Resources();
+  const xobjects = resources?.lookup(PDFName.of('XObject'), PDFDict);
+  return xobjects ? xobjects.keys().length : 0;
+}
+
+async function uploadPngLogo(bytes: Buffer, filename: string): Promise<string> {
+  const form = new FormData();
+  form.set('file', new File([new Uint8Array(bytes)], filename, { type: 'image/png' }));
+  const res = await uploadLogo(new NextRequest('http://localhost:3000/api/uploads/logos', { method: 'POST', headers: ADMIN_HEADERS, body: form }));
+  expect(res.status).toBe(200);
+  return (await res.json()).url;
+}
 
 let ADMIN_HEADERS: Record<string, string>;
 
@@ -116,5 +134,69 @@ describe('Templates API', () => {
     expect(pdfRes.status).toBe(200);
     const pdfBytes = Buffer.from(await pdfRes.arrayBuffer());
     expect(pdfBytes.subarray(0, 5).toString('utf-8')).toBe('%PDF-');
+  });
+
+  it('renders two independently uploaded logos (organizer top-left, supported-by bottom-right) end to end', async () => {
+    const templateRes = await createTemplate(
+      jsonRequest('http://localhost:3000/api/templates', 'POST', {
+        name: `Logo Left Two Logos ${Date.now()}`,
+        layoutJson: JSON.stringify(DEFAULT_CERTIFICATE_LAYOUT),
+        designVariant: 'logo_left',
+      })
+    );
+    const { template } = await templateRes.json();
+
+    const programRes = await createProgram(
+      jsonRequest('http://localhost:3000/api/programs', 'POST', {
+        title: 'AI for Ophthalmologist',
+        category: 'workshop',
+        organizedBy: 'Popular Pharmaceuticals PLC',
+        issuedBy: 'MN Corporation',
+        startDate: '2026-10-26',
+        endDate: '2026-10-27',
+      })
+    );
+    const { program } = await programRes.json();
+
+    const organizerLogoBytes = await generateQrPngBuffer('https://verify.example.com/ORGANIZER');
+    const supportedByLogoBytes = await generateQrPngBuffer('https://verify.example.com/SUPPORTED-BY');
+    const organizerLogoUrl = await uploadPngLogo(organizerLogoBytes, 'organizer-logo.png');
+    const logoUrl = await uploadPngLogo(supportedByLogoBytes, 'supported-by-logo.png');
+
+    const assignRes = await updateProgramById(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}`, 'PUT', {
+        templateId: template.id,
+        organizerLogoUrl,
+        logoUrl,
+      }),
+      { params: { id: program.id } }
+    );
+    expect(assignRes.status).toBe(200);
+    const { program: updatedProgram } = await assignRes.json();
+    expect(updatedProgram.organizerLogoUrl).toBe(organizerLogoUrl);
+    expect(updatedProgram.logoUrl).toBe(logoUrl);
+    expect(updatedProgram.organizerLogoUrl).not.toBe(updatedProgram.logoUrl);
+
+    await createParticipant(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/participants`, 'POST', {
+        fullName: 'Dr. Abdul Muhit Chowdhury Abir',
+      }),
+      { params: { id: program.id } }
+    );
+
+    const genRes = await generateCertificates(
+      jsonRequest(`http://localhost:3000/api/programs/${program.id}/certificates/generate`, 'POST', { prefix: 'MNC' }),
+      { params: { id: program.id } }
+    );
+    const { results } = await genRes.json();
+    const uid = results[0].certificateUid;
+
+    const pdfRes = await getCertificatePdf(
+      new NextRequest(`http://localhost:3000/api/certificates/${uid}/pdf`, { headers: ADMIN_HEADERS }),
+      { params: { uid } }
+    );
+    const pdfBytes = Buffer.from(await pdfRes.arrayBuffer());
+    // QR code + organizer logo (top-left) + supported-by logo (bottom-right) = 3 distinct images.
+    expect(await countImageXObjects(pdfBytes)).toBe(3);
   });
 });

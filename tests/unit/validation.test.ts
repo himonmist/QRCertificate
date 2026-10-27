@@ -65,6 +65,33 @@ describe('programInputSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('accepts an organizerLogoUrl produced by the image upload endpoint, independent of logoUrl', () => {
+    const result = programInputSchema.safeParse({
+      title: 'Workshop',
+      category: 'workshop',
+      organizedBy: 'Popular Pharmaceuticals PLC',
+      issuedBy: 'Popular Pharmaceuticals PLC',
+      startDate: '2026-03-01',
+      endDate: '2026-03-02',
+      logoUrl: '/uploads/logos/mn-corporation.png',
+      organizerLogoUrl: '/uploads/logos/popular-pharma.png',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a path-traversal payload for organizerLogoUrl', () => {
+    const result = programInputSchema.safeParse({
+      title: 'Workshop',
+      category: 'workshop',
+      organizedBy: 'MN Corporation',
+      issuedBy: 'MN Corporation',
+      startDate: '2026-03-01',
+      endDate: '2026-03-02',
+      organizerLogoUrl: '../../../../etc/passwd',
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('participantInputSchema', () => {

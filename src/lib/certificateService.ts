@@ -274,24 +274,29 @@ export async function renderCertificateAssets(certificateUid: string): Promise<R
     certificate.program.trainers.find((t) => t.role === 'chief_trainer')?.trainer ??
     certificate.program.trainers[0]?.trainer;
 
-  const [backgroundImageBytes, signatureImageBytes, logoImageBytes, qrBuffer] = await Promise.all([
-    certificate.program.template?.backgroundUrl
-      ? loadImageBytes(certificate.program.template.backgroundUrl)
-      : Promise.resolve(null),
-    chiefTrainer?.signatureUrl ? loadImageBytes(chiefTrainer.signatureUrl) : Promise.resolve(null),
-    // Loaded live from the program row, same as the signature/background
-    // above — a logo is a branding visual, not certified certificate
-    // content, so an admin adding one after certificates were already
-    // issued should see it appear immediately without needing to reissue.
-    certificate.program.logoUrl ? loadImageBytes(certificate.program.logoUrl) : Promise.resolve(null),
-    generateQrPngBuffer(certificate.qrPayloadUrl),
-  ]);
+  const [backgroundImageBytes, signatureImageBytes, logoImageBytes, organizerLogoImageBytes, qrBuffer] =
+    await Promise.all([
+      certificate.program.template?.backgroundUrl
+        ? loadImageBytes(certificate.program.template.backgroundUrl)
+        : Promise.resolve(null),
+      chiefTrainer?.signatureUrl ? loadImageBytes(chiefTrainer.signatureUrl) : Promise.resolve(null),
+      // Loaded live from the program row, same as the signature/background
+      // above — a logo is a branding visual, not certified certificate
+      // content, so an admin adding one after certificates were already
+      // issued should see it appear immediately without needing to reissue.
+      certificate.program.logoUrl ? loadImageBytes(certificate.program.logoUrl) : Promise.resolve(null),
+      certificate.program.organizerLogoUrl
+        ? loadImageBytes(certificate.program.organizerLogoUrl)
+        : Promise.resolve(null),
+      generateQrPngBuffer(certificate.qrPayloadUrl),
+    ]);
 
   const pdfBuffer = await renderCertificatePdf({
     layout,
     backgroundImageBytes,
     signatureImageBytes,
     logoImageBytes,
+    organizerLogoImageBytes,
     designVariant: isCertificateDesignVariant(certificate.program.template?.designVariant)
       ? certificate.program.template?.designVariant
       : undefined,

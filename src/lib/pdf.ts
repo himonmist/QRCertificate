@@ -17,8 +17,10 @@ export interface RenderCertificateInput {
   layout: CertificateLayout;
   backgroundImageBytes?: Buffer | null;
   signatureImageBytes?: Buffer | null;
-  /** Optional organization logo for the default design's "Issued by" footer zone. Omitted entirely (no placeholder) when not provided. */
+  /** Optional organization logo for the default design's "Supported by" footer zone. Omitted entirely (no placeholder) when not provided. */
   logoImageBytes?: Buffer | null;
+  /** Optional, independent logo for the 'logo_left' variant's top-left corner (typically the organizing company's own logo). Has no effect on any other design; omitted entirely (no placeholder, no fallback to logoImageBytes) when not provided. */
+  organizerLogoImageBytes?: Buffer | null;
   /** Selects a built-in vector design variant (see certificateLayout.ts); unset/unrecognized falls back to the classic design. Ignored when backgroundImageBytes is provided. */
   designVariant?: CertificateDesignVariant | null;
   values: CertificateValues;
@@ -287,6 +289,7 @@ async function drawDefaultCertificateDesign(
   values: CertificateValues,
   signatureImageBytes: Buffer | null | undefined,
   logoImageBytes: Buffer | null | undefined,
+  organizerLogoImageBytes: Buffer | null | undefined,
   variant: CertificateDesignVariant | undefined
 ): Promise<void> {
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -315,13 +318,15 @@ async function drawDefaultCertificateDesign(
     borderWidth: 5,
   });
 
-  // logo_left variant only: the organizing company's logo in the top-left
-  // corner, mirroring the QR code's placement in the top-right. Silently
-  // skipped if no logo was uploaded or the image fails to embed — same
-  // "no placeholder" rule as the footer logo below.
-  if (footer.showTopLeftLogo && logoImageBytes) {
+  // logo_left variant only: the organizing company's own logo in the
+  // top-left corner, mirroring the QR code's placement in the top-right.
+  // Entirely independent of the bottom-right "Supported by" logo below —
+  // its own field, no fallback to it — silently skipped if no organizer
+  // logo was uploaded or the image fails to embed, same "no placeholder"
+  // rule as the footer logo below.
+  if (footer.showTopLeftLogo && organizerLogoImageBytes) {
     try {
-      const image = await embedImageBytes(pdfDoc, logoImageBytes);
+      const image = await embedImageBytes(pdfDoc, organizerLogoImageBytes);
       const maxLogoWidth = 70;
       const maxLogoHeight = 70;
       const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height);
@@ -563,7 +568,17 @@ export async function renderCertificatePdf(input: RenderCertificateInput): Promi
     // design (double green border, presented-to/name block, completion
     // paragraph, organization/date/signature footer).
     const variant = isCertificateDesignVariant(input.designVariant) ? input.designVariant : undefined;
-    await drawDefaultCertificateDesign(pdfDoc, page, width, height, input.values, input.signatureImageBytes, input.logoImageBytes, variant);
+    await drawDefaultCertificateDesign(
+      pdfDoc,
+      page,
+      width,
+      height,
+      input.values,
+      input.signatureImageBytes,
+      input.logoImageBytes,
+      input.organizerLogoImageBytes,
+      variant
+    );
 
     const qrImage = await pdfDoc.embedPng(input.qrPngBuffer);
     const qrSize = 62;

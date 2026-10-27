@@ -31,6 +31,9 @@ export const programInputSchemaBase = z.object({
   duration: z.string().trim().max(100).optional(),
   templateId: z.string().uuid().optional(),
   logoUrl: trustedImageRefSchema('logoUrl must be a path returned by an image upload endpoint').nullable().optional(),
+  organizerLogoUrl: trustedImageRefSchema('organizerLogoUrl must be a path returned by an image upload endpoint')
+    .nullable()
+    .optional(),
 });
 
 export const programInputSchema = programInputSchemaBase.refine(
